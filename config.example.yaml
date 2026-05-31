@@ -1,0 +1,12 @@
+# PostgreSQL Client Configuration Example
+host: localhost
+port: 5432
+user: postgres
+password: your_password_here
+database: postgres
+ssl_mode: disable
+
+# Connection pool settings (optional)
+# max_idle_connections: 10
+# max_open_connections: 100
+# connection_max_lifetime: 5m

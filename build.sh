@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Cross-compilation script for PostgreSQL Client
+# This script builds the application for multiple platforms
+
+set -e
+
+APP_NAME="postgresql-client"
+VERSION=${VERSION:-"1.0.0"}
+OUTPUT_DIR="dist"
+
+echo "Building $APP_NAME v$VERSION..."
+echo ""
+
+# Create output directory
+mkdir -p "$OUTPUT_DIR"
+
+# Define target platforms and architectures
+TARGETS=(
+    "darwin/amd64:macOS_x86_64"
+    "darwin/arm64:macOS_ARM64"
+    "linux/amd64:Linux_x86_64"
+    "linux/386:Linux_i386"
+    "linux/arm64:Linux_ARM64"
+    "windows/amd64:Windows_x86_64.exe"
+    "windows/386:Windows_i386.exe"
+)
+
+# Build for each target
+for target in "${TARGETS[@]}"; do
+    IFS=':' read -r GOOS_GOARCH OUTPUT_NAME <<< "$target"
+    GOOS="${GOOS_GOARCH%/*}"
+    GOARCH="${GOOS_GOARCH#*/}"
+    
+    echo "Building for $GOOS/$GOARCH -> $OUTPUT_NAME..."
+    
+    # Output file name with app name prefix
+    if [[ "$GOOS" == "windows" ]]; then
+        OUTPUT_FILE="$OUTPUT_DIR/${APP_NAME}-${OUTPUT_NAME}"
+    else
+        OUTPUT_FILE="$OUTPUT_DIR/${APP_NAME}-${OUTPUT_NAME}"
+    fi
+    
+    CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+        -o "$OUTPUT_FILE" \
+        -ldflags="-s -w" \
+        .
+    
+    if [ $? -eq 0 ]; then
+        echo "Built: $OUTPUT_NAME"
+    else
+        echo "Failed: $OUTPUT_NAME"
+    fi
+    echo ""
+done
+
+echo "Build completed! Output directory: $OUTPUT_DIR"
+echo ""
+echo "Files built:"
+ls -la "$OUTPUT_DIR" || dir "$OUTPUT_DIR" 2>/dev/null || echo "Directory listing not available"
