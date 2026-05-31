@@ -13,6 +13,7 @@ import (
 	"github.com/colin2wang/postgresql-client/commons"
 	"github.com/colin2wang/postgresql-client/config"
 	"github.com/colin2wang/postgresql-client/database"
+	"github.com/colin2wang/postgresql-client/ui"
 	"github.com/colin2wang/postgresql-client/utils"
 )
 
@@ -150,6 +151,11 @@ func runInteractive(ctx context.Context, db *database.Database, cfg *config.Conf
 		query := strings.TrimSpace(strings.TrimSuffix(text, "\n"))
 
 		switch query {
+		case "\\m", "\\menu":
+			if err := showMainMenu(ctx, db, cfg); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+
 		case "\\q", "quit", "exit":
 			fmt.Println("Goodbye!")
 			return
@@ -167,14 +173,36 @@ func runInteractive(ctx context.Context, db *database.Database, cfg *config.Conf
 				fmt.Printf("Error: %v\n", err)
 			}
 
+		case "\\t", "\\select-table":
+			if err := selectTableInteractive(ctx, db, cfg); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+
+		case "\\s", "\\select-db":
+			newDb, err := selectDatabaseInteractive(ctx, db, cfg)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+			} else if newDb != nil {
+				db = newDb
+				prompt = fmt.Sprintf("%s@%s> ", cfg.User, cfg.Database)
+			}
+
+		case "\\c", "\\C":
+			newDb, err := selectDatabaseInteractive(ctx, db, cfg)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+			} else if newDb != nil {
+				db = newDb
+				prompt = fmt.Sprintf("%s@%s> ", cfg.User, cfg.Database)
+			}
+
+		case "\\d", "\\D":
+			if err := selectAndDescribeTable(ctx, db, cfg); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+
 		default:
-			if strings.HasPrefix(query, "\\d ") || strings.HasPrefix(query, "\\D ") {
-				tableName := strings.TrimSpace(strings.TrimPrefix(query, "\\d "))
-				tableName = strings.ToLower(tableName)
-				if err := describeTable(ctx, db, tableName); err != nil {
-					fmt.Printf("Error: %v\n", err)
-				}
-			} else if query != "" {
+			if query != "" {
 				history.Add(query)
 				executeAndPrint(ctx, db, query)
 			}
@@ -189,12 +217,16 @@ func printWelcome(cfg *config.Config) {
 	fmt.Println("========================================")
 	fmt.Println("Supported commands:")
 	fmt.Println("  - SQL statements (SELECT, INSERT, UPDATE, DELETE, etc.)")
+	fmt.Println("  - \\m              - Show main menu (interactive)")
 	fmt.Println("  - \\q              - Quit the client")
 	fmt.Println("  - \\h              - Show this help message")
 	fmt.Println("  - \\l              - List all databases")
 	fmt.Println("  - \\dt             - List all tables")
-	fmt.Println("  - \\d <table>      - Describe table structure")
-	// Empty line for readability
+	fmt.Println("  - \\d              - Select and describe table structure (interactive)")
+	fmt.Println("  - \\c              - Select and connect to database (interactive)")
+	fmt.Println("  - \\s              - Select database with arrow keys")
+	fmt.Println("  - \\t              - Select table with arrow keys and choose action")
+	fmt.Println("                    (show structure, show content, or edit content)")
 }
 
 func executeAndPrint(ctx context.Context, db *database.Database, query string) {
@@ -229,8 +261,8 @@ func listTables(ctx context.Context, db *database.Database) error {
 	defer rows.Close()
 
 	fmt.Println("Found table(s) in database:")
-	fmt.Printf("%-30s %s\n", "Table Name", "Type")
-	fmt.Println(strings.Repeat("-", 50))
+	fmt.Printf("%-30s %-10s %s\n", "Table Name", "Type", "Row Count")
+	fmt.Println(strings.Repeat("-", 55))
 
 	rowCount := 0
 	for rows.Next() {
@@ -238,7 +270,13 @@ func listTables(ctx context.Context, db *database.Database) error {
 		if err := rows.Scan(&name, &typ); err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
-		fmt.Printf("%-30s %s\n", name, typ)
+
+		count, err := getRowCountForTable(ctx, db, name)
+		if err != nil {
+			fmt.Printf("%-30s %-10s %s\n", name, typ, "N/A")
+		} else {
+			fmt.Printf("%-30s %-10s %d\n", name, typ, count)
+		}
 		rowCount++
 	}
 
@@ -322,6 +360,394 @@ func showDatabases(ctx context.Context, db *database.Database) error {
 	return nil
 }
 
+// selectDatabaseInteractive interactively selects a database using arrow keys
+func selectDatabaseInteractive(ctx context.Context, db *database.Database, cfg *config.Config) (*database.Database, error) {
+	commons.DefaultLogger.Debug("Starting interactive database selection")
+
+	databases, err := getAllDatabases(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get databases: %w", err)
+	}
+
+	if len(databases) == 0 {
+		fmt.Println("No databases found.")
+		return db, nil
+	}
+
+	dbOptions := make([]string, len(databases))
+	for i, dbInfo := range databases {
+		dbOptions[i] = fmt.Sprintf("%s (%d tables)", dbInfo.Name, dbInfo.TableCount)
+	}
+
+	selector := ui.NewDBSelector()
+	selected, err := selector.Select("Select a database:", dbOptions)
+	if err != nil {
+		return nil, fmt.Errorf("database selection failed: %w", err)
+	}
+
+	selectedDBName := strings.Split(selected, " (")[0]
+
+	newCfg := *cfg
+	newCfg.Database = selectedDBName
+	db.Close()
+
+	newDb, err := database.NewDatabase(&newCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database '%s': %w", selectedDBName, err)
+	}
+
+	cfg.Database = selectedDBName
+	fmt.Printf("Successfully connected to database: %s\n", selectedDBName)
+	return newDb, nil
+}
+
+// DatabaseInfo represents database information including name and table count
+type DatabaseInfo struct {
+	Name       string // Name of the database
+	TableCount int    // Number of tables in the database
+}
+
+// getAllDatabases retrieves all available databases and their table counts
+func getAllDatabases(ctx context.Context, db *database.Database) ([]DatabaseInfo, error) {
+	query := `SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname`
+
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query databases: %w", err)
+	}
+	defer rows.Close()
+
+	var databases []DatabaseInfo
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		tableCount, err := getTableCountForDatabase(ctx, db, name)
+		if err != nil {
+			commons.DefaultLogger.Warn("Failed to get table count for database %s: %v", name, err)
+			tableCount = 0
+		}
+
+		databases = append(databases, DatabaseInfo{
+			Name:       name,
+			TableCount: tableCount,
+		})
+	}
+
+	return databases, nil
+}
+
+// getTableCountForDatabase retrieves the number of tables in a specified database
+func getTableCountForDatabase(ctx context.Context, db *database.Database, dbName string) (int, error) {
+	query := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+	`
+
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query table count: %w", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var count int
+		if err := rows.Scan(&count); err != nil {
+			return 0, fmt.Errorf("scan failed: %w", err)
+		}
+		return count, nil
+	}
+
+	return 0, nil
+}
+
+// selectTableInteractive interactively selects a table using arrow keys for user selection
+func selectTableInteractive(ctx context.Context, db *database.Database, cfg *config.Config) error {
+	commons.DefaultLogger.Debug("Starting interactive table selection")
+
+	tables, err := getAllTables(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get tables: %w", err)
+	}
+
+	if len(tables) == 0 {
+		fmt.Println("No tables found.")
+		return nil
+	}
+
+	tableOptions := make([]string, len(tables))
+	for i, tableInfo := range tables {
+		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
+	}
+
+	selector := ui.NewTableSelector()
+	selected, err := selector.Select(fmt.Sprintf("Select a table (current: %s):", cfg.Database), tableOptions)
+	if err != nil {
+		return fmt.Errorf("table selection failed: %w", err)
+	}
+
+	selectedTableName := strings.Split(selected, " (")[0]
+	fmt.Printf("Selected table: %s\n", selectedTableName)
+
+	actionSelector := ui.NewTableActionSelector()
+	action, err := actionSelector.Select(fmt.Sprintf("What would you like to do with table '%s'?", selectedTableName))
+	if err != nil {
+		return fmt.Errorf("action selection failed: %w", err)
+	}
+
+	switch action {
+	case "Show table structure":
+		if err := describeTable(ctx, db, selectedTableName); err != nil {
+			return fmt.Errorf("failed to describe table: %w", err)
+		}
+	case "Show table content":
+		if err := showTableContent(ctx, db, selectedTableName); err != nil {
+			return fmt.Errorf("failed to show table content: %w", err)
+		}
+	case "Edit table content":
+		if err := editTableContent(ctx, db, selectedTableName); err != nil {
+			return fmt.Errorf("failed to edit table content: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// TableInfo represents table information including name and row count
+type TableInfo struct {
+	Name     string // Name of the table
+	RowCount int    // Number of rows in the table
+}
+
+// getAllTables retrieves all available tables and their row counts
+func getAllTables(ctx context.Context, db *database.Database) ([]TableInfo, error) {
+	query := `
+		SELECT table_name 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+		ORDER BY table_name
+	`
+
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []TableInfo
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		rowCount, err := getRowCountForTable(ctx, db, name)
+		if err != nil {
+			commons.DefaultLogger.Warn("Failed to get row count for table %s: %v", name, err)
+			rowCount = 0
+		}
+
+		tables = append(tables, TableInfo{
+			Name:     name,
+			RowCount: rowCount,
+		})
+	}
+
+	return tables, nil
+}
+
+// getRowCountForTable retrieves the number of rows in a specified table
+func getRowCountForTable(ctx context.Context, db *database.Database, tableName string) (int, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query row count: %w", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var count int
+		if err := rows.Scan(&count); err != nil {
+			return 0, fmt.Errorf("scan failed: %w", err)
+		}
+		return count, nil
+	}
+
+	return 0, nil
+}
+
+// selectAndDescribeTable selects a table from interactive list and displays its structure
+func selectAndDescribeTable(ctx context.Context, db *database.Database, cfg *config.Config) error {
+	commons.DefaultLogger.Debug("Starting interactive table selection for description")
+
+	tables, err := getAllTables(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get tables: %w", err)
+	}
+
+	if len(tables) == 0 {
+		fmt.Println("No tables found.")
+		return nil
+	}
+
+	tableOptions := make([]string, len(tables))
+	for i, tableInfo := range tables {
+		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
+	}
+
+	selector := ui.NewTableSelector()
+	selected, err := selector.Select(fmt.Sprintf("Select a table to describe (current: %s):", cfg.Database), tableOptions)
+	if err != nil {
+		return fmt.Errorf("table selection failed: %w", err)
+	}
+
+	selectedTableName := strings.Split(selected, " (")[0]
+	return describeTable(ctx, db, selectedTableName)
+}
+
+// showMainMenu displays the main menu with available actions for user selection
+func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config) error {
+	commons.DefaultLogger.Debug("Showing main menu")
+
+	menu := ui.NewMenu("Select an action:", []string{
+		"List all databases",
+		"List all tables",
+		"Select and describe table structure",
+		"Select and show table content",
+		"Select and edit table content",
+		"Select and connect to database",
+		"Execute custom SQL query",
+		"Show help",
+		"Quit",
+	})
+
+	selected, err := menu.Select()
+	if err != nil {
+		return fmt.Errorf("menu selection failed: %w", err)
+	}
+
+	switch selected {
+	case "List all databases":
+		if err := showDatabases(ctx, db); err != nil {
+			return fmt.Errorf("failed to show databases: %w", err)
+		}
+	case "List all tables":
+		if err := listTables(ctx, db); err != nil {
+			return fmt.Errorf("failed to list tables: %w", err)
+		}
+	case "Select and describe table structure":
+		if err := selectAndDescribeTable(ctx, db, cfg); err != nil {
+			return fmt.Errorf("failed to select and describe table: %w", err)
+		}
+	case "Select and show table content":
+		if err := selectAndShowTableContent(ctx, db, cfg); err != nil {
+			return fmt.Errorf("failed to select and show table content: %w", err)
+		}
+	case "Select and edit table content":
+		if err := selectAndEditTableContent(ctx, db, cfg); err != nil {
+			return fmt.Errorf("failed to select and edit table content: %w", err)
+		}
+	case "Select and connect to database":
+		newDb, err := selectDatabaseInteractive(ctx, db, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to select database: %w", err)
+		} else if newDb != nil {
+			fmt.Println("Database connection updated successfully")
+		}
+	case "Execute custom SQL query":
+		if err := executeCustomQuery(ctx, db); err != nil {
+			return fmt.Errorf("failed to execute custom query: %w", err)
+		}
+	case "Show help":
+		printWelcome(cfg)
+	case "Quit":
+		fmt.Println("Goodbye!")
+		os.Exit(0)
+	}
+
+	return nil
+}
+
+// selectAndShowTableContent selects a table from interactive list and displays its content
+func selectAndShowTableContent(ctx context.Context, db *database.Database, cfg *config.Config) error {
+	commons.DefaultLogger.Debug("Starting interactive table selection for content display")
+
+	tables, err := getAllTables(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get tables: %w", err)
+	}
+
+	if len(tables) == 0 {
+		fmt.Println("No tables found.")
+		return nil
+	}
+
+	tableOptions := make([]string, len(tables))
+	for i, tableInfo := range tables {
+		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
+	}
+
+	selector := ui.NewTableSelector()
+	selected, err := selector.Select(fmt.Sprintf("Select a table to show content (current: %s):", cfg.Database), tableOptions)
+	if err != nil {
+		return fmt.Errorf("table selection failed: %w", err)
+	}
+
+	selectedTableName := strings.Split(selected, " (")[0]
+	return showTableContent(ctx, db, selectedTableName)
+}
+
+// selectAndEditTableContent selects a table from interactive list and allows editing its content
+func selectAndEditTableContent(ctx context.Context, db *database.Database, cfg *config.Config) error {
+	commons.DefaultLogger.Debug("Starting interactive table selection for content editing")
+
+	tables, err := getAllTables(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get tables: %w", err)
+	}
+
+	if len(tables) == 0 {
+		fmt.Println("No tables found.")
+		return nil
+	}
+
+	tableOptions := make([]string, len(tables))
+	for i, tableInfo := range tables {
+		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
+	}
+
+	selector := ui.NewTableSelector()
+	selected, err := selector.Select(fmt.Sprintf("Select a table to edit content (current: %s):", cfg.Database), tableOptions)
+	if err != nil {
+		return fmt.Errorf("table selection failed: %w", err)
+	}
+
+	selectedTableName := strings.Split(selected, " (")[0]
+	return editTableContent(ctx, db, selectedTableName)
+}
+
+// executeCustomQuery prompts user for a custom SQL query and executes it
+func executeCustomQuery(ctx context.Context, db *database.Database) error {
+	input := ui.NewInput("Enter your SQL query:", "")
+	query, err := input.Ask()
+	if err != nil {
+		return fmt.Errorf("failed to get query input: %w", err)
+	}
+
+	if query == "" {
+		fmt.Println("Query cancelled.")
+		return nil
+	}
+
+	executeAndPrint(ctx, db, query)
+	return nil
+}
+
+// runScript executes SQL commands from a file
 func runScript(ctx context.Context, db *database.Database, filename string) error {
 	commons.DefaultLogger.Debug("Running script: %s", filename)
 
@@ -351,6 +777,7 @@ func runScript(ctx context.Context, db *database.Database, filename string) erro
 	return nil
 }
 
+// exportJSON executes a query and exports results as JSON formatted output
 func exportJSON(ctx context.Context, db *database.Database, query string) {
 	commons.DefaultLogger.Debug("Exporting JSON for query")
 	rows, err := db.ExecuteQuery(ctx, query)
@@ -396,6 +823,7 @@ func exportJSON(ctx context.Context, db *database.Database, query string) {
 	fmt.Println(string(jsonBytes))
 }
 
+// exportCSV executes a query and exports results as CSV formatted output
 func exportCSV(ctx context.Context, db *database.Database, query string) {
 	commons.DefaultLogger.Debug("Exporting CSV for query")
 	rows, err := db.ExecuteQuery(ctx, query)
@@ -431,6 +859,7 @@ func exportCSV(ctx context.Context, db *database.Database, query string) {
 	}
 }
 
+// formatValue converts an interface value to its string representation for display
 func formatValue(v interface{}) string {
 	commons.DefaultLogger.Debug("Formatting value for output")
 
@@ -446,10 +875,226 @@ func formatValue(v interface{}) string {
 	}
 }
 
-// min returns the smaller of two integers
+// min returns the smaller of two integer values
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+// showTableContent retrieves and displays all rows from a specified table
+func showTableContent(ctx context.Context, db *database.Database, tableName string) error {
+	commons.DefaultLogger.Debug("Showing table content: %s", tableName)
+
+	query := fmt.Sprintf("SELECT * FROM %s", tableName)
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to query table content: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	tableData, err := parseTableData(rows, columns)
+	if err != nil {
+		return fmt.Errorf("failed to parse table data: %w", err)
+	}
+
+	if len(tableData) == 0 {
+		fmt.Println("No data found in table.")
+		return nil
+	}
+
+	printTable(columns, tableData)
+	fmt.Printf("\n%d row(s) found\n", len(tableData))
+	return nil
+}
+
+// editTableContent retrieves and allows editing of table rows with interactive UI
+func editTableContent(ctx context.Context, db *database.Database, tableName string) error {
+	commons.DefaultLogger.Debug("Editing table content: %s", tableName)
+
+	query := fmt.Sprintf("SELECT * FROM %s", tableName)
+	rows, err := db.ExecuteQuery(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to query table content: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	tableData, err := parseTableData(rows, columns)
+	if err != nil {
+		return fmt.Errorf("failed to parse table data: %w", err)
+	}
+
+	if len(tableData) == 0 {
+		fmt.Println("No data found in table to edit.")
+		return nil
+	}
+
+	printTable(columns, tableData)
+
+	rowSelector := ui.NewRowSelector(tableData)
+	_, err = rowSelector.Select("Select a row to edit:")
+	if err != nil {
+		return fmt.Errorf("row selection failed: %w", err)
+	}
+
+	selectedRow := rowSelector.GetSelected()
+	if selectedRow == nil {
+		return fmt.Errorf("selected row not found")
+	}
+
+	rowEditor := ui.NewRowEditor(selectedRow, columns)
+
+	for {
+		selection, err := rowEditor.SelectColumnsToEdit()
+		if err != nil {
+			return fmt.Errorf("column selection failed: %w", err)
+		}
+
+		if len(selection) == 0 {
+			continue
+		}
+
+		action := selection[0]
+
+		if action == "SAVE" {
+			if !rowEditor.HasChanges() {
+				fmt.Println("No changes made to save.")
+				return nil
+			}
+
+			confirm := ui.NewConfirm("Are you sure you want to update this row?", false)
+			confirmed, err := confirm.Ask()
+			if err != nil {
+				return fmt.Errorf("confirmation failed: %w", err)
+			}
+
+			if !confirmed {
+				fmt.Println("Update cancelled.")
+				return nil
+			}
+
+			editedRow := rowEditor.GetEditedRow()
+			if err := updateTableRow(ctx, db, tableName, columns, selectedRow, editedRow); err != nil {
+				return fmt.Errorf("failed to update row: %w", err)
+			}
+
+			fmt.Println("Row updated successfully!")
+			return nil
+		}
+
+		if action == "DISCARD" {
+			fmt.Println("Changes discarded.")
+			return nil
+		}
+
+		column := action
+		currentValue := rowEditor.GetEditedRow()[column]
+		newValue, err := rowEditor.EditColumn(column, currentValue)
+		if err != nil {
+			fmt.Printf("Failed to edit column %s: %v\n", column, err)
+			continue
+		}
+
+		rowEditor.GetEditedRow()[column] = newValue
+		fmt.Printf("Updated %s: %s -> %s\n", column, formatValue(currentValue), formatValue(newValue))
+	}
+}
+
+// parseTableData converts SQL rows into a slice of map[string]interface{} for further processing
+func parseTableData(rows *sql.Rows, columns []string) ([]map[string]interface{}, error) {
+	var tableData []map[string]interface{}
+
+	values := make([]interface{}, len(columns))
+	valuePtrs := make([]interface{}, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+
+	for rows.Next() {
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			rowMap[col] = values[i]
+		}
+		tableData = append(tableData, rowMap)
+	}
+
+	return tableData, nil
+}
+
+// printTable renders table data in a formatted ASCII table to stdout
+func printTable(columns []string, tableData []map[string]interface{}) {
+	colWidths := make([]int, len(columns))
+	for i, col := range columns {
+		colWidths[i] = len(col)
+	}
+
+	for _, row := range tableData {
+		for i, col := range columns {
+			val := formatValue(row[col])
+			if len(val) > colWidths[i] {
+				colWidths[i] = len(val)
+			}
+		}
+	}
+
+	for i, col := range columns {
+		fmt.Printf("%-*s", colWidths[i]+2, col)
+	}
+	fmt.Println()
+
+	for _, width := range colWidths {
+		fmt.Printf("%s", strings.Repeat("-", width+2))
+	}
+	fmt.Println()
+
+	for _, row := range tableData {
+		for i, col := range columns {
+			val := formatValue(row[col])
+			fmt.Printf("%-*s", colWidths[i]+2, val)
+		}
+		fmt.Println()
+	}
+}
+
+// updateTableRow updates a row in the specified table with new values
+func updateTableRow(ctx context.Context, db *database.Database, tableName string, columns []string, oldRow, newRow map[string]interface{}) error {
+	setClauses := make([]string, 0, len(columns))
+	whereClauses := make([]string, 0, len(columns))
+	args := make([]interface{}, 0, len(columns)*2)
+
+	for _, col := range columns {
+		newValue := newRow[col]
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, len(args)+1))
+		args = append(args, newValue)
+	}
+
+	for _, col := range columns {
+		oldValue := oldRow[col]
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", col, len(args)+1))
+		args = append(args, oldValue)
+	}
+
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
+
+	_, err := db.ExecuteNonQuery(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update query failed: %w", err)
+	}
+
+	return nil
 }

@@ -11,6 +11,8 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 - JSON and CSV export
 - Command history
 - YAML configuration support
+- **Interactive database selection with arrow keys**
+- **Interactive table selection with arrow keys**
 
 ## Project Structure
 
@@ -22,6 +24,8 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 │   └── connector.go
 ├── database/        # Database operations
 │   └── database.go
+├── ui/              # Interactive UI components
+│   └── ui.go        # Survey-based interactive selectors
 ├── utils/           # Utility functions
 │   └── utils.go     # Formatting, history, etc.
 ├── main.go          # Main entry point
@@ -93,6 +97,9 @@ Or use environment variables:
 - `\l`, `\list` - List all databases
 - `\dt` - List all tables
 - `\d <table>` - Describe table structure
+- `\s`, `\select-db` - Select database with arrow keys
+- `\t`, `\select-table` - Select table with arrow keys
+- `\c <db>` - Connect to database (triggers arrow key selection if empty)
 
 ## Building
 
@@ -122,6 +129,16 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o postgresql-client-linux .
 
 - Go 1.25+
 - PostgreSQL server
+
+## Interactive Selection
+
+The client supports interactive database and table selection using arrow keys:
+
+### Select Database
+Use `\s` or `\select-db` command to open a selector with all available databases. Use up/down arrows to navigate and Enter to select.
+
+### Select Table
+Use `\t` or `\select-table` command to open a selector with all available tables. Use up/down arrows to navigate and Enter to select. The table structure will be displayed after selection.
 
 ## License
 

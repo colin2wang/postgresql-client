@@ -6,6 +6,8 @@ import (
 
 	"github.com/colin2wang/postgresql-client/commons"
 	"github.com/colin2wang/postgresql-client/config"
+	// PostgreSQL driver
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // Database handles all database operations
