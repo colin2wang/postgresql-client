@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/colin2wang/postgresql-client/commons"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,6 +45,7 @@ func DefaultConfig() *Config {
 
 // LoadConfig loads configuration from a YAML file
 func LoadConfig(filePath string) (*Config, error) {
+	commons.DefaultLogger.Debug("Loading configuration from file: %s", filePath)
 	config := DefaultConfig()
 
 	// If no file path provided or file doesn't exist, use environment variables
@@ -53,11 +55,22 @@ func LoadConfig(filePath string) (*Config, error) {
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		commons.DefaultLogger.Error("Failed to read config file: %v", err)
+		return nil, &commons.FileError{
+			Message:     "failed to read config file",
+			Path:        filePath,
+			Action:      "read",
+			OriginalErr: err,
+		}
 	}
 
 	if err := yaml.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		commons.DefaultLogger.Error("Failed to parse config file: %v", err)
+		return nil, &commons.ConfigError{
+			Message:     "failed to parse config file",
+			ConfigKey:   "",
+			OriginalErr: err,
+		}
 	}
 
 	// Fall back to environment variables if not set in config
@@ -65,6 +78,7 @@ func LoadConfig(filePath string) (*Config, error) {
 }
 
 func loadFromEnv(config *Config) *Config {
+	commons.DefaultLogger.Debug("Loading configuration from environment variables")
 	if envHost := os.Getenv("PGHOST"); envHost != "" {
 		config.Host = envHost
 	}
@@ -84,6 +98,7 @@ func loadFromEnv(config *Config) *Config {
 }
 
 func fileExists(path string) bool {
+	commons.DefaultLogger.Debug("Checking if file exists: %s", path)
 	_, err := os.Stat(path)
 	return err == nil
 }
@@ -94,6 +109,7 @@ func parseInt(s string, def int) int {
 	}
 	val, err := strconv.Atoi(s)
 	if err != nil {
+		commons.DefaultLogger.Warn("Failed to parse config value: %v, using default: %d", err, def)
 		return def
 	}
 	return val
@@ -101,13 +117,26 @@ func parseInt(s string, def int) int {
 
 // SaveConfig saves configuration to a YAML file
 func SaveConfig(config *Config, filePath string) error {
+	commons.DefaultLogger.Debug("Saving configuration to file: %s", filePath)
+
 	data, err := yaml.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		commons.DefaultLogger.Error("Failed to marshal config: %v", err)
+		return &commons.ConfigError{
+			Message:     "failed to marshal config",
+			ConfigKey:   "",
+			OriginalErr: err,
+		}
 	}
 
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		commons.DefaultLogger.Error("Failed to write config file: %v", err)
+		return &commons.FileError{
+			Message:     "failed to write config file",
+			Path:        filePath,
+			Action:      "write",
+			OriginalErr: err,
+		}
 	}
 	return nil
 }

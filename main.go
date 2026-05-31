@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/colin2wang/postgresql-client/commons"
 	"github.com/colin2wang/postgresql-client/config"
 	"github.com/colin2wang/postgresql-client/database"
 	"github.com/colin2wang/postgresql-client/utils"
@@ -31,6 +32,7 @@ func main() {
 	cfg, err := loadConfig(*configPath, *host, *port, *user, *password, *databaseName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		commons.DefaultLogger.Error("Failed to load configuration: %v", err)
 		os.Exit(1)
 	}
 
@@ -38,9 +40,12 @@ func main() {
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+		commons.DefaultLogger.Error("Failed to connect to database: %v", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	commons.DefaultLogger.Info("Configuration loaded successfully")
 
 	// Check if running in non-interactive mode
 	if flag.NArg() > 0 {
@@ -53,9 +58,14 @@ func main() {
 }
 
 func loadConfig(configPath string, host string, port int, user, password, databaseName string) (*config.Config, error) {
+	commons.DefaultLogger.Info("Loading configuration...")
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		return nil, err
+		commons.DefaultLogger.Error("Failed to load configuration: %v", err)
+		return nil, &commons.ConfigError{
+			Message:     "failed to load configuration",
+			OriginalErr: err,
+		}
 	}
 
 	// Override with command line arguments if provided
@@ -119,6 +129,8 @@ func handleNonInteractive(ctx context.Context, db *database.Database, args []str
 }
 
 func runInteractive(ctx context.Context, db *database.Database, cfg *config.Config) {
+	commons.DefaultLogger.Info("Starting interactive mode")
+
 	printWelcome(cfg)
 
 	history := utils.NewHistory(100)
@@ -130,6 +142,7 @@ func runInteractive(ctx context.Context, db *database.Database, cfg *config.Conf
 
 		text, err := reader.ReadString('\n')
 		if err != nil {
+			commons.DefaultLogger.Error("Error reading input: %v", err)
 			fmt.Printf("\nError reading input: %v\n", err)
 			continue
 		}
@@ -185,8 +198,11 @@ func printWelcome(cfg *config.Config) {
 }
 
 func executeAndPrint(ctx context.Context, db *database.Database, query string) {
+	commons.DefaultLogger.Debug("Executing query: %s", query[:min(len(query), 50)])
+
 	result, err := db.ExecuteQuery(ctx, query)
 	if err != nil {
+		commons.DefaultLogger.Error("Query execution failed: %v", err)
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
@@ -198,6 +214,7 @@ func executeAndPrint(ctx context.Context, db *database.Database, query string) {
 }
 
 func listTables(ctx context.Context, db *database.Database) error {
+	commons.DefaultLogger.Debug("Listing tables...")
 	query := `
 		SELECT table_name, table_type 
 		FROM information_schema.tables 
@@ -230,6 +247,7 @@ func listTables(ctx context.Context, db *database.Database) error {
 }
 
 func describeTable(ctx context.Context, db *database.Database, tableName string) error {
+	commons.DefaultLogger.Debug("Describing table: %s", tableName)
 	query := `
 		SELECT 
 			column_name,
@@ -277,6 +295,7 @@ func describeTable(ctx context.Context, db *database.Database, tableName string)
 }
 
 func showDatabases(ctx context.Context, db *database.Database) error {
+	commons.DefaultLogger.Debug("Showing databases...")
 	query := `SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname`
 
 	rows, err := db.ExecuteQuery(ctx, query)
@@ -304,9 +323,17 @@ func showDatabases(ctx context.Context, db *database.Database) error {
 }
 
 func runScript(ctx context.Context, db *database.Database, filename string) error {
+	commons.DefaultLogger.Debug("Running script: %s", filename)
+
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+		commons.DefaultLogger.Error("Failed to read file '%s': %v", filename, err)
+		return &commons.FileError{
+			Message:     "failed to read SQL file",
+			Path:        filename,
+			Action:      "read",
+			OriginalErr: err,
+		}
 	}
 
 	query := strings.TrimSpace(string(data))
@@ -325,6 +352,7 @@ func runScript(ctx context.Context, db *database.Database, filename string) erro
 }
 
 func exportJSON(ctx context.Context, db *database.Database, query string) {
+	commons.DefaultLogger.Debug("Exporting JSON for query")
 	rows, err := db.ExecuteQuery(ctx, query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Export failed: %v\n", err)
@@ -369,6 +397,7 @@ func exportJSON(ctx context.Context, db *database.Database, query string) {
 }
 
 func exportCSV(ctx context.Context, db *database.Database, query string) {
+	commons.DefaultLogger.Debug("Exporting CSV for query")
 	rows, err := db.ExecuteQuery(ctx, query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Export failed: %v\n", err)
@@ -403,6 +432,8 @@ func exportCSV(ctx context.Context, db *database.Database, query string) {
 }
 
 func formatValue(v interface{}) string {
+	commons.DefaultLogger.Debug("Formatting value for output")
+
 	if v == nil {
 		return "NULL"
 	}
@@ -413,4 +444,12 @@ func formatValue(v interface{}) string {
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
