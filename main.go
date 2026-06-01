@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/colin2wang/postgresql-client/commons"
 	"github.com/colin2wang/postgresql-client/config"
 	"github.com/colin2wang/postgresql-client/database"
@@ -507,10 +508,6 @@ func selectTableInteractive(ctx context.Context, db *database.Database, cfg *con
 		if err := showTableContent(ctx, db, selectedTableName); err != nil {
 			return fmt.Errorf("failed to show table content: %w", err)
 		}
-	case "Edit table content":
-		if err := editTableContent(ctx, db, selectedTableName); err != nil {
-			return fmt.Errorf("failed to edit table content: %w", err)
-		}
 	}
 
 	return nil
@@ -618,7 +615,6 @@ func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config
 		"List all tables",
 		"Select and describe table structure",
 		"Select and show table content",
-		"Select and edit table content",
 		"Select and connect to database",
 		"Execute custom SQL query",
 		"Show help",
@@ -646,10 +642,6 @@ func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config
 	case "Select and show table content":
 		if err := selectAndShowTableContent(ctx, db, cfg); err != nil {
 			return fmt.Errorf("failed to select and show table content: %w", err)
-		}
-	case "Select and edit table content":
-		if err := selectAndEditTableContent(ctx, db, cfg); err != nil {
-			return fmt.Errorf("failed to select and edit table content: %w", err)
 		}
 	case "Select and connect to database":
 		newDb, err := selectDatabaseInteractive(ctx, db, cfg)
@@ -699,35 +691,6 @@ func selectAndShowTableContent(ctx context.Context, db *database.Database, cfg *
 
 	selectedTableName := strings.Split(selected, " (")[0]
 	return showTableContent(ctx, db, selectedTableName)
-}
-
-// selectAndEditTableContent selects a table from interactive list and allows editing its content
-func selectAndEditTableContent(ctx context.Context, db *database.Database, cfg *config.Config) error {
-	commons.DefaultLogger.Debug("Starting interactive table selection for content editing")
-
-	tables, err := getAllTables(ctx, db)
-	if err != nil {
-		return fmt.Errorf("failed to get tables: %w", err)
-	}
-
-	if len(tables) == 0 {
-		fmt.Println("No tables found.")
-		return nil
-	}
-
-	tableOptions := make([]string, len(tables))
-	for i, tableInfo := range tables {
-		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
-	}
-
-	selector := ui.NewTableSelector()
-	selected, err := selector.Select(fmt.Sprintf("Select a table to edit content (current: %s):", cfg.Database), tableOptions)
-	if err != nil {
-		return fmt.Errorf("table selection failed: %w", err)
-	}
-
-	selectedTableName := strings.Split(selected, " (")[0]
-	return editTableContent(ctx, db, selectedTableName)
 }
 
 // executeCustomQuery prompts user for a custom SQL query and executes it
@@ -883,80 +846,212 @@ func min(a, b int) int {
 	return b
 }
 
-// showTableContent retrieves and displays all rows from a specified table
+// showTableContent retrieves and displays all rows from a specified table with pagination
 func showTableContent(ctx context.Context, db *database.Database, tableName string) error {
 	commons.DefaultLogger.Debug("Showing table content: %s", tableName)
 
-	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-	rows, err := db.ExecuteQuery(ctx, query)
+	// First get total count
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	countRows, err := db.ExecuteQuery(ctx, countQuery)
 	if err != nil {
-		return fmt.Errorf("failed to query table content: %w", err)
+		return fmt.Errorf("failed to get row count: %w", err)
 	}
-	defer rows.Close()
-
-	columns, err := rows.Columns()
-	if err != nil {
-		return fmt.Errorf("failed to get columns: %w", err)
+	var totalRecords int
+	if countRows.Next() {
+		countRows.Scan(&totalRecords)
 	}
+	countRows.Close()
 
-	tableData, err := parseTableData(rows, columns)
-	if err != nil {
-		return fmt.Errorf("failed to parse table data: %w", err)
-	}
-
-	if len(tableData) == 0 {
+	if totalRecords == 0 {
 		fmt.Println("No data found in table.")
 		return nil
 	}
 
-	printTable(columns, tableData)
-	fmt.Printf("\n%d row(s) found\n", len(tableData))
+	pageSize := 20
+	pagination := ui.NewPaginationSelector(totalRecords, pageSize)
+
+	for {
+		// Query current page
+		offset := (pagination.GetCurrentPage() - 1) * pageSize
+		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d", tableName, pageSize, offset)
+		rows, err := db.ExecuteQuery(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to query table content: %w", err)
+		}
+
+		columns, err := rows.Columns()
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to get columns: %w", err)
+		}
+
+		tableData, err := parseTableData(rows, columns)
+		rows.Close()
+		if err != nil {
+			return fmt.Errorf("failed to parse table data: %w", err)
+		}
+
+		if len(tableData) == 0 {
+			fmt.Println("No data found on this page.")
+			continue
+		}
+
+		// Set current page data for pagination selector
+		pagination.SetCurrentPageData(columns, tableData)
+
+		// Show combined page/row selection
+		result, err := pagination.SelectPage()
+		if err != nil {
+			return fmt.Errorf("selection failed: %w", err)
+		}
+
+		switch result.Action {
+		case "row":
+			// Convert absolute row index to page-relative index
+			pageRelativeIdx := result.RowIndex - (pagination.GetCurrentPage()-1)*pageSize
+			if pageRelativeIdx >= 0 && pageRelativeIdx < len(tableData) {
+				err := showRowDetail(ctx, db, tableName, columns, tableData[pageRelativeIdx])
+				if err != nil {
+					return fmt.Errorf("failed to show row detail: %w", err)
+				}
+			}
+		case "page":
+			// Page changed, continue to next iteration to reload data
+		case "exit":
+			// User chose to go back
+			return nil
+		}
+	}
+
 	return nil
 }
 
-// editTableContent retrieves and allows editing of table rows with interactive UI
-func editTableContent(ctx context.Context, db *database.Database, tableName string) error {
-	commons.DefaultLogger.Debug("Editing table content: %s", tableName)
+// printTableWithTruncation prints table with truncated values
+func printTableWithTruncation(columns []string, tableData []map[string]interface{}, maxLen int) {
+	colWidths := make([]int, len(columns))
+	for i, col := range columns {
+		colWidths[i] = min(len(col)+2, maxLen+2)
+	}
 
-	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-	rows, err := db.ExecuteQuery(ctx, query)
+	for _, row := range tableData {
+		for i, col := range columns {
+			val := ui.TruncateValue(row[col], maxLen)
+			if len(val)+2 > colWidths[i] {
+				colWidths[i] = min(len(val)+2, maxLen+2)
+			}
+		}
+	}
+
+	// Print header
+	for i, col := range columns {
+		fmt.Printf("%-*s", colWidths[i], col)
+	}
+	fmt.Println()
+
+	// Print separator
+	for _, width := range colWidths {
+		fmt.Printf("%s", strings.Repeat("-", width))
+	}
+	fmt.Println()
+
+	// Print rows
+	for _, row := range tableData {
+		for i, col := range columns {
+			val := ui.TruncateValue(row[col], maxLen)
+			fmt.Printf("%-*s", colWidths[i], val)
+		}
+		fmt.Println()
+	}
+}
+
+// selectTableRow allows user to select a row or exit
+func selectTableRow(tableData []map[string]interface{}, columns []string) (int, error) {
+	options := make([]string, len(tableData)+1)
+
+	for i, row := range tableData {
+		var values []string
+		for _, col := range columns {
+			values = append(values, ui.TruncateValue(row[col], 30))
+		}
+		options[i] = fmt.Sprintf("Row %d: %s", i+1, strings.Join(values, ", "))
+	}
+	options[len(tableData)] = "[Back] Back"
+
+	var selected string
+	err := survey.AskOne(
+		&survey.Select{
+			Message:  "Select a row to view details or go back:",
+			Options:  options,
+			PageSize: 15,
+		},
+		&selected,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to query table content: %w", err)
-	}
-	defer rows.Close()
-
-	columns, err := rows.Columns()
-	if err != nil {
-		return fmt.Errorf("failed to get columns: %w", err)
+		return -1, err
 	}
 
-	tableData, err := parseTableData(rows, columns)
-	if err != nil {
-		return fmt.Errorf("failed to parse table data: %w", err)
+	if selected == "[Back] Back" {
+		return -1, nil
 	}
 
-	if len(tableData) == 0 {
-		fmt.Println("No data found in table to edit.")
-		return nil
+	for i, option := range options {
+		if option == selected {
+			return i, nil
+		}
 	}
 
-	printTable(columns, tableData)
+	return -1, nil
+}
 
-	rowSelector := ui.NewRowSelector(tableData)
-	_, err = rowSelector.Select("Select a row to edit:")
-	if err != nil {
-		return fmt.Errorf("row selection failed: %w", err)
+// showRowDetail shows row details with edit options
+func showRowDetail(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) error {
+	for {
+		viewer := ui.NewRowDetailViewer(row, columns)
+		action, err := viewer.Show()
+		if err != nil {
+			return fmt.Errorf("row detail view failed: %w", err)
+		}
+
+		switch action {
+		case "BACK":
+			return nil
+		case "EDIT":
+			err := editRowDetail(ctx, db, tableName, columns, row)
+			if err != nil {
+				fmt.Printf("Edit failed: %v\n", err)
+			} else {
+				fmt.Println("Row updated successfully!")
+				// Refresh row data
+				row, err = getRowByValues(ctx, db, tableName, columns, row)
+				if err != nil {
+					fmt.Printf("Failed to refresh row: %v\n", err)
+				}
+			}
+		case "DELETE":
+			confirm := ui.NewConfirm("Are you sure you want to delete this row?", false)
+			confirmed, err := confirm.Ask()
+			if err != nil {
+				return fmt.Errorf("confirmation failed: %w", err)
+			}
+			if confirmed {
+				err := deleteRow(ctx, db, tableName, columns, row)
+				if err != nil {
+					fmt.Printf("Delete failed: %v\n", err)
+				} else {
+					fmt.Println("Row deleted successfully!")
+					return nil
+				}
+			}
+		}
 	}
+}
 
-	selectedRow := rowSelector.GetSelected()
-	if selectedRow == nil {
-		return fmt.Errorf("selected row not found")
-	}
-
-	rowEditor := ui.NewRowEditor(selectedRow, columns)
+// editRowDetail edits a row in detail view
+func editRowDetail(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) error {
+	editor := ui.NewRowEditor(row, columns)
 
 	for {
-		selection, err := rowEditor.SelectColumnsToEdit()
+		selection, err := editor.SelectColumnsToEdit()
 		if err != nil {
 			return fmt.Errorf("column selection failed: %w", err)
 		}
@@ -968,7 +1063,7 @@ func editTableContent(ctx context.Context, db *database.Database, tableName stri
 		action := selection[0]
 
 		if action == "SAVE" {
-			if !rowEditor.HasChanges() {
+			if !editor.HasChanges() {
 				fmt.Println("No changes made to save.")
 				return nil
 			}
@@ -984,12 +1079,16 @@ func editTableContent(ctx context.Context, db *database.Database, tableName stri
 				return nil
 			}
 
-			editedRow := rowEditor.GetEditedRow()
-			if err := updateTableRow(ctx, db, tableName, columns, selectedRow, editedRow); err != nil {
+			editedRow := editor.GetEditedRow()
+			if err := updateTableRow(ctx, db, tableName, columns, row, editedRow); err != nil {
 				return fmt.Errorf("failed to update row: %w", err)
 			}
 
-			fmt.Println("Row updated successfully!")
+			// Update the row data
+			for k, v := range editedRow {
+				row[k] = v
+			}
+
 			return nil
 		}
 
@@ -999,16 +1098,66 @@ func editTableContent(ctx context.Context, db *database.Database, tableName stri
 		}
 
 		column := action
-		currentValue := rowEditor.GetEditedRow()[column]
-		newValue, err := rowEditor.EditColumn(column, currentValue)
+		currentValue := editor.GetEditedRow()[column]
+		newValue, err := editor.EditColumn(column, currentValue)
 		if err != nil {
 			fmt.Printf("Failed to edit column %s: %v\n", column, err)
 			continue
 		}
 
-		rowEditor.GetEditedRow()[column] = newValue
-		fmt.Printf("Updated %s: %s -> %s\n", column, formatValue(currentValue), formatValue(newValue))
+		editor.GetEditedRow()[column] = newValue
+		fmt.Printf("Updated %s: %s -> %s\n", column, ui.FormatValue(currentValue), ui.FormatValue(newValue))
 	}
+}
+
+// deleteRow deletes a row from the table
+func deleteRow(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) error {
+	whereClauses := make([]string, 0, len(columns))
+	args := make([]interface{}, 0, len(columns))
+
+	for _, col := range columns {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", col, len(args)+1))
+		args = append(args, row[col])
+	}
+
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, strings.Join(whereClauses, " AND "))
+
+	_, err := db.ExecuteNonQuery(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("delete query failed: %w", err)
+	}
+
+	return nil
+}
+
+// getRowByValues retrieves a row by its values (used to refresh after update)
+func getRowByValues(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) (map[string]interface{}, error) {
+	whereClauses := make([]string, 0, len(columns))
+	args := make([]interface{}, 0, len(columns))
+
+	for _, col := range columns {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", col, len(args)+1))
+		args = append(args, row[col])
+	}
+
+	query := fmt.Sprintf("SELECT * FROM %s WHERE %s", tableName, strings.Join(whereClauses, " AND "))
+
+	rows, err := db.ExecuteQuery(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query row: %w", err)
+	}
+	defer rows.Close()
+
+	result, err := parseTableData(rows, columns)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse row data: %w", err)
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("row not found")
+	}
+
+	return result[0], nil
 }
 
 // parseTableData converts SQL rows into a slice of map[string]interface{} for further processing

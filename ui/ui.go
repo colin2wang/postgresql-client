@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -259,7 +260,6 @@ func NewTableActionSelector() *TableActionSelector {
 		actions: []string{
 			"Show table structure",
 			"Show table content",
-			"Edit table content",
 		},
 	}
 }
@@ -380,8 +380,8 @@ func (re *RowEditor) SelectColumnsToEdit() ([]string, error) {
 			options[i] = fmt.Sprintf("%s: %s", column, currentValue)
 		}
 	}
-	options[len(re.columns)] = "✓ Save changes"
-	options[len(re.columns)+1] = "✗ Discard changes"
+	options[len(re.columns)] = "[Save] Save changes"
+	options[len(re.columns)+1] = "[Discard] Discard changes"
 
 	var selected string
 	err := survey.AskOne(
@@ -396,10 +396,10 @@ func (re *RowEditor) SelectColumnsToEdit() ([]string, error) {
 		return nil, err
 	}
 
-	if selected == "✓ Save changes" {
+	if selected == "[Save] Save changes" {
 		return []string{"SAVE"}, nil
 	}
-	if selected == "✗ Discard changes" {
+	if selected == "[Discard] Discard changes" {
 		return []string{"DISCARD"}, nil
 	}
 
@@ -493,4 +493,276 @@ func formatValue(v interface{}) string {
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// FormatValue formats a value for display (public)
+func FormatValue(v interface{}) string {
+	return formatValue(v)
+}
+
+// TruncateValue truncates a value to maxLength characters
+func TruncateValue(v interface{}, maxLength int) string {
+	str := formatValue(v)
+	if len(str) > maxLength {
+		return str[:maxLength-3] + "..."
+	}
+	return str
+}
+
+// PaginationSelector pagination selector
+type PaginationSelector struct {
+	currentPage  int
+	totalPages   int
+	pageSize     int
+	totalRecords int
+	columns      []string
+	currentRows  []map[string]interface{}
+}
+
+// NewPaginationSelector creates a new pagination selector
+func NewPaginationSelector(totalRecords, pageSize int) *PaginationSelector {
+	totalPages := (totalRecords + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	return &PaginationSelector{
+		currentPage:  1,
+		totalPages:   totalPages,
+		pageSize:     pageSize,
+		totalRecords: totalRecords,
+	}
+}
+
+// SetCurrentPageData sets the current page data for display
+func (ps *PaginationSelector) SetCurrentPageData(columns []string, rows []map[string]interface{}) {
+	ps.columns = columns
+	ps.currentRows = rows
+}
+
+// GetCurrentPage returns current page number
+func (ps *PaginationSelector) GetCurrentPage() int {
+	return ps.currentPage
+}
+
+// GetPageSize returns page size
+func (ps *PaginationSelector) GetPageSize() int {
+	return ps.pageSize
+}
+
+// GetTotalPages returns total pages
+func (ps *PaginationSelector) GetTotalPages() int {
+	return ps.totalPages
+}
+
+// GetTotalRecords returns total records
+func (ps *PaginationSelector) GetTotalRecords() int {
+	return ps.totalRecords
+}
+
+// SelectResult represents the result of a selection
+type SelectResult struct {
+	Action     string // "page", "row", or "exit"
+	PageNumber int
+	RowIndex   int
+}
+
+// SelectPage displays pagination options and row list, allows user to select a page or row
+func (ps *PaginationSelector) SelectPage() (SelectResult, error) {
+	result := SelectResult{
+		Action:     "page",
+		PageNumber: ps.currentPage,
+		RowIndex:   -1,
+	}
+
+	if ps.totalPages <= 1 && len(ps.currentRows) == 0 {
+		return result, nil
+	}
+
+	options := make([]string, 0)
+
+	// Add backward navigation options (when not on first page)
+	if ps.currentPage > 1 {
+		options = append(options, "<< First Page")
+		options = append(options, "< Previous Page")
+	}
+
+	// Add current page indicator
+	options = append(options, fmt.Sprintf("[%d] Current Page", ps.currentPage))
+
+	// Add forward navigation options (when not on last page)
+	if ps.currentPage < ps.totalPages {
+		options = append(options, "Next Page >")
+		options = append(options, "Last Page >>")
+	}
+
+	// Add custom navigation options
+	options = append(options, "Go to page...")
+	options = append(options, "Go to row...")
+
+	// Add back option
+	options = append(options, "[Back] Back")
+
+	// Add separator
+	options = append(options, "---")
+
+	// Add row options
+	if len(ps.currentRows) > 0 {
+		for i, row := range ps.currentRows {
+			var values []string
+			for _, col := range ps.columns {
+				values = append(values, TruncateValue(row[col], 30))
+			}
+			rowNum := (ps.currentPage-1)*ps.pageSize + i + 1
+			options = append(options, fmt.Sprintf("Row %d: %s", rowNum, strings.Join(values, ", ")))
+		}
+	}
+
+	var selected string
+	err := survey.AskOne(
+		&survey.Select{
+			Message: fmt.Sprintf("Select page or row (%d/%d, %d records per page, total %d records)",
+				ps.currentPage, ps.totalPages, ps.pageSize, ps.totalRecords),
+			Options:  options,
+			PageSize: 20,
+		},
+		&selected,
+	)
+	if err != nil {
+		return result, err
+	}
+
+	// Parse selection
+	switch {
+	case strings.HasPrefix(selected, "[") && strings.HasSuffix(selected, "] Current Page"):
+		// Stay on current page, select a row
+		result.Action = "page"
+	case selected == "<< First Page":
+		ps.currentPage = 1
+		result.PageNumber = ps.currentPage
+	case selected == "< Previous Page":
+		ps.currentPage = max(1, ps.currentPage-1)
+		result.PageNumber = ps.currentPage
+	case selected == "Next Page >":
+		ps.currentPage = min(ps.totalPages, ps.currentPage+1)
+		result.PageNumber = ps.currentPage
+	case selected == "Last Page >>":
+		ps.currentPage = ps.totalPages
+		result.PageNumber = ps.currentPage
+	case selected == "Go to page...":
+		var pageStr string
+		err := survey.AskOne(
+			&survey.Input{
+				Message: fmt.Sprintf("Enter page number (1-%d):", ps.totalPages),
+				Default: strconv.Itoa(ps.currentPage),
+			},
+			&pageStr,
+		)
+		if err == nil {
+			if pageNum, err := strconv.Atoi(pageStr); err == nil && pageNum >= 1 && pageNum <= ps.totalPages {
+				ps.currentPage = pageNum
+				result.PageNumber = ps.currentPage
+			}
+		}
+	case selected == "Go to row...":
+		var rowStr string
+		err := survey.AskOne(
+			&survey.Input{
+				Message: fmt.Sprintf("Enter row number (1-%d):", ps.totalRecords),
+				Default: strconv.Itoa((ps.currentPage-1)*ps.pageSize + 1),
+			},
+			&rowStr,
+		)
+		if err == nil {
+			if rowNum, err := strconv.Atoi(rowStr); err == nil && rowNum >= 1 && rowNum <= ps.totalRecords {
+				ps.currentPage = (rowNum-1)/ps.pageSize + 1
+				result.PageNumber = ps.currentPage
+			}
+		}
+	case strings.HasPrefix(selected, "Row "):
+		// Extract row number from selection
+		rowNumStr := strings.TrimPrefix(selected, "Row ")
+		rowNumStr = strings.Split(rowNumStr, ":")[0]
+		if rowNum, err := strconv.Atoi(rowNumStr); err == nil {
+			result.Action = "row"
+			result.RowIndex = rowNum - 1 // Convert to 0-based index
+		}
+	case selected == "[Back] Back":
+		// Exit to previous menu
+		result.Action = "exit"
+	}
+
+	return result, nil
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// RowDetailViewer displays row details
+type RowDetailViewer struct {
+	row     map[string]interface{}
+	columns []string
+}
+
+// NewRowDetailViewer creates a new row detail viewer
+func NewRowDetailViewer(row map[string]interface{}, columns []string) *RowDetailViewer {
+	return &RowDetailViewer{
+		row:     row,
+		columns: columns,
+	}
+}
+
+// Show displays row details with edit menu
+func (rdv *RowDetailViewer) Show() (string, error) {
+	options := make([]string, len(rdv.columns)+3)
+
+	// Add action options first
+	options[0] = "[Edit] Edit this row"
+	options[1] = "[Delete] Delete this row"
+	options[2] = "[Back] Back to list"
+
+	// Add row details with index
+	for i, column := range rdv.columns {
+		value := formatValue(rdv.row[column])
+		options[i+3] = fmt.Sprintf("(%d) %s = %s", i+1, column, value)
+	}
+
+	var selected string
+	err := survey.AskOne(
+		&survey.Select{
+			Message:  "Row Details",
+			Options:  options,
+			PageSize: 20,
+		},
+		&selected,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	switch selected {
+	case "[Edit] Edit this row":
+		return "EDIT", nil
+	case "[Delete] Delete this row":
+		return "DELETE", nil
+	case "[Back] Back to list":
+		return "BACK", nil
+	default:
+		return "BACK", nil
+	}
+}
+
+// GetRow returns the row data
+func (rdv *RowDetailViewer) GetRow() map[string]interface{} {
+	return rdv.row
 }

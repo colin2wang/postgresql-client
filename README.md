@@ -13,11 +13,16 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 - YAML configuration support
 - **Interactive database selection with arrow keys**
 - **Interactive table selection with arrow keys**
+- **Interactive main menu**
+- **Row viewing, editing, and deletion**
+- **Table content pagination**
 
 ## Project Structure
 
 ```
 .
+├── commons/         # Shared utilities, logging, error types
+│   └── commons.go
 ├── config/          # Configuration management
 │   └── config.go    # Config loading from YAML/env
 ├── connector/       # Database connection handling
@@ -94,12 +99,13 @@ Or use environment variables:
 
 - `\q`, `quit`, `exit` - Quit the client
 - `\h`, `\?`, `help` - Show help message
+- `\m`, `\menu` - Open main menu with all available actions
 - `\l`, `\list` - List all databases
 - `\dt` - List all tables
-- `\d <table>` - Describe table structure
+- `\d` - Select and describe table structure (interactive)
 - `\s`, `\select-db` - Select database with arrow keys
-- `\t`, `\select-table` - Select table with arrow keys
-- `\c <db>` - Connect to database (triggers arrow key selection if empty)
+- `\t`, `\select-table` - Select table with arrow keys and choose action
+- `\c` - Select and connect to database (interactive)
 
 ## Building
 
@@ -134,11 +140,33 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o postgresql-client-linux .
 
 The client supports interactive database and table selection using arrow keys:
 
+### Main Menu
+Use `\m` or `\menu` command to open the main menu with all available actions:
+- List all databases
+- List all tables  
+- Select and describe table structure
+- Select and show table content
+- Select and connect to database
+- Execute custom SQL query
+- Show help
+- Quit
+
 ### Select Database
-Use `\s` or `\select-db` command to open a selector with all available databases. Use up/down arrows to navigate and Enter to select.
+Use `\s` or `\select-db` command to open a selector with all available databases (showing table counts). Use up/down arrows to navigate and Enter to select.
 
 ### Select Table
-Use `\t` or `\select-table` command to open a selector with all available tables. Use up/down arrows to navigate and Enter to select. The table structure will be displayed after selection.
+Use `\t` or `\select-table` command to open a selector with all available tables (showing row counts). After selecting a table, you can choose to:
+- Show table structure
+- Show table content
+
+### Row Operations
+When viewing table content, you can:
+- Navigate through pages using pagination (first page, previous page, next page, last page)
+- Jump to specific page or row
+- Select a row directly from the combined page/row selection interface
+- View row details
+- Edit row values
+- Delete a row (with confirmation)
 
 ## License
 

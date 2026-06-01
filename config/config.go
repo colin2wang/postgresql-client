@@ -48,6 +48,15 @@ func LoadConfig(filePath string) (*Config, error) {
 	commons.DefaultLogger.Debug("Loading configuration from file: %s", filePath)
 	config := DefaultConfig()
 
+	// Check for default config file if no path provided
+	if filePath == "" {
+		if fileExists("config.yaml") {
+			filePath = "config.yaml"
+		} else if fileExists("config.yml") {
+			filePath = "config.yml"
+		}
+	}
+
 	// If no file path provided or file doesn't exist, use environment variables
 	if filePath == "" || !fileExists(filePath) {
 		return loadFromEnv(config), nil
