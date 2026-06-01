@@ -5,9 +5,12 @@
 
 set -e
 
+# get the project root directory, regardless of where the script is executed
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 APP_NAME="postgresql-client"
 VERSION=${VERSION:-"1.0.0"}
-OUTPUT_DIR="dist"
+OUTPUT_DIR="${PROJECT_ROOT}/dist"
 
 echo "Building $APP_NAME v$VERSION..."
 echo ""
@@ -44,7 +47,7 @@ for target in "${TARGETS[@]}"; do
     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
         -o "$OUTPUT_FILE" \
         -ldflags="-s -w" \
-        .
+        "$PROJECT_ROOT"
     
     if [ $? -eq 0 ]; then
         echo "Built: $OUTPUT_NAME"
@@ -57,4 +60,10 @@ done
 echo "Build completed! Output directory: $OUTPUT_DIR"
 echo ""
 echo "Files built:"
-ls -la "$OUTPUT_DIR" || dir "$OUTPUT_DIR" 2>/dev/null || echo "Directory listing not available"
+if command -v ls >/dev/null 2>&1; then
+    ls -la "$OUTPUT_DIR" || echo "Directory listing not available"
+elif command -v dir >/dev/null 2>&1; then
+    dir "$OUTPUT_DIR" || echo "Directory listing not available"
+else
+    echo "Directory listing not available"
+fi

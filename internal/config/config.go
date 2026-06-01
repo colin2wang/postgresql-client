@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/colin2wang/postgresql-client/commons"
+	"github.com/colin2wang/postgresql-client/internal/commons"
 	"gopkg.in/yaml.v3"
 )
 

@@ -1,4 +1,4 @@
-package ui
+package cil
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/colin2wang/postgresql-client/commons"
+	"github.com/colin2wang/postgresql-client/internal/commons"
 )
 
 // DBSelector database selector

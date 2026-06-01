@@ -3,8 +3,10 @@ package commons
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -12,7 +14,7 @@ import (
 type Logger struct {
 	level      LogLevel
 	logFile    *os.File
-	output     *os.File
+	output     io.Writer
 	timeFormat string
 }
 
@@ -51,6 +53,13 @@ func WithLogFile(file *os.File) LoggerOption {
 	}
 }
 
+// WithOutput sets the output writer (for testing)
+func WithOutput(w io.Writer) LoggerOption {
+	return func(l *Logger) {
+		l.output = w
+	}
+}
+
 // NewLogger creates a new logger instance
 func NewLogger(opts ...LoggerOption) *Logger {
 	logger := &Logger{
@@ -64,6 +73,22 @@ func NewLogger(opts ...LoggerOption) *Logger {
 	}
 
 	return logger
+}
+
+// SetOutput sets the output writer
+func (l *Logger) SetOutput(w io.Writer) {
+	if w == nil {
+		l.output = os.Stdout
+	} else {
+		l.output = w
+	}
+}
+
+// SetOutputString returns a *strings.Builder for testing
+func (l *Logger) SetOutputString() *strings.Builder {
+	buf := &strings.Builder{}
+	l.output = buf
+	return buf
 }
 
 // Log logs a message with the given level
@@ -350,6 +375,48 @@ func (e *FileError) Unwrap() error {
 	return e.OriginalErr
 }
 
+// Formatters for data formatting
+
+// Formatter formats values for display
+type Formatter struct{}
+
+// FormatValue formats a value for display
+func (f *Formatter) FormatValue(v interface{}) string {
+	if v == nil {
+		return "NULL"
+	}
+
+	switch val := v.(type) {
+	case []byte:
+		return string(val)
+	case time.Time:
+		return val.Format("2006-01-02 15:04:05")
+	default:
+		return ToString(val)
+	}
+}
+
+// FormatDuration formats a duration for display
+func (f *Formatter) FormatDuration(duration time.Duration) string {
+	return FormatDuration(duration)
+}
+
+// CSVFormatter formats values for CSV output
+type CSVFormatter struct{}
+
+// FormatValue formats a value for CSV output
+func (f *CSVFormatter) FormatValue(v interface{}) string {
+	if v == nil {
+		return "NULL"
+	}
+
+	str := ToString(v)
+	if Contains(str, ",") || Contains(str, "\"") || Contains(str, "\n") {
+		str = "\"" + ReplaceAll(str, "\"", "\"\"") + "\""
+	}
+	return str
+}
+
 // Utility functions
 
 // IsContextCancelled checks if the context was cancelled
@@ -461,6 +528,21 @@ func ToString(v interface{}) string {
 	}
 }
 
+// ToStringDefault converts any value to string with default value
+func ToStringDefault(v interface{}, def string) string {
+	if v == nil {
+		return def
+	}
+	switch val := v.(type) {
+	case []byte:
+		return string(val)
+	case string:
+		return val
+	default:
+		return ToString(val)
+	}
+}
+
 // ParseInt parses a string to int with default value
 func ParseInt(s string, def int) int {
 	if s == "" {
@@ -471,4 +553,54 @@ func ParseInt(s string, def int) int {
 		return def
 	}
 	return val
+}
+
+// History manages command history
+
+// History represents a command history manager
+type History struct {
+	commands []string
+	maxSize  int
+}
+
+// NewHistory creates a new history manager
+func NewHistory(maxSize int) *History {
+	return &History{
+		commands: make([]string, 0, maxSize),
+		maxSize:  maxSize,
+	}
+}
+
+// Add adds a command to history
+func (h *History) Add(cmd string) {
+	if cmd == "" {
+		return
+	}
+	h.commands = append(h.commands, cmd)
+	if len(h.commands) > h.maxSize {
+		h.commands = h.commands[1:]
+	}
+}
+
+// List returns all commands in history
+func (h *History) List() []string {
+	return h.commands
+}
+
+// Clear clears the history
+func (h *History) Clear() {
+	h.commands = nil
+}
+
+// Index returns the index of the first instance of substr in s, or -1 if not found
+func Index(s, substr string, start int) int {
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }

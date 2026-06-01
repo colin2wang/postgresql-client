@@ -21,18 +21,15 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 
 ```
 .
-├── commons/         # Shared utilities, logging, error types
-│   └── commons.go
-├── config/          # Configuration management
-│   └── config.go    # Config loading from YAML/env
-├── connector/       # Database connection handling
-│   └── connector.go
-├── database/        # Database operations
-│   └── database.go
-├── ui/              # Interactive UI components
-│   └── ui.go        # Survey-based interactive selectors
-├── utils/           # Utility functions
-│   └── utils.go     # Formatting, history, etc.
+├── internal/        # Internal packages
+│   ├── cil/         # Command-line interface interactive components
+│   │   └── interface.go    # Survey-based interactive selectors (DB, table, menu, row)
+│   ├── commons/     # Shared utilities, logging, error types
+│   │   └── commons.go      # Logger, error types, formatters, utility functions
+│   ├── config/      # Configuration management
+│   │   └── config.go       # Config loading from YAML/env
+│   └── database/    # Database operations
+│       └── database.go     # Database connection and query execution
 ├── main.go          # Main entry point
 ├── config.example.yaml  # Example configuration
 ├── build.sh         # Linux/macOS build script

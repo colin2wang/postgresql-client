@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/colin2wang/postgresql-client/commons"
-	"github.com/colin2wang/postgresql-client/config"
+	"github.com/colin2wang/postgresql-client/internal/commons"
+	"github.com/colin2wang/postgresql-client/internal/config"
+
 	// PostgreSQL driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 )

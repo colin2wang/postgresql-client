@@ -3,7 +3,11 @@
 
 $APP_NAME = "postgresql-client"
 $VERSION = if ($env:VERSION) { $env:VERSION } else { "1.0.0" }
-$OUTPUT_DIR = "dist"
+
+# get the project root directory, regardless of where the script is executed
+$SCRIPT_DIR = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
+$PROJECT_ROOT = $SCRIPT_DIR
+$OUTPUT_DIR = Join-Path $PROJECT_ROOT "dist"
 
 Write-Host "Building $APP_NAME v$VERSION..." -ForegroundColor Cyan
 Write-Host ""
@@ -33,11 +37,7 @@ foreach ($target in $TARGETS.Keys) {
     Write-Host "Building for $GOOS/$GOARCH -> $OUTPUT_NAME..." -ForegroundColor Yellow
     
     # Output file name with app name prefix
-    if ($GOOS -eq "windows") {
-        $OUTPUT_FILE = Join-Path $OUTPUT_DIR "${APP_NAME}-${OUTPUT_NAME}"
-    } else {
-        $OUTPUT_FILE = Join-Path $OUTPUT_DIR "${APP_NAME}-${OUTPUT_NAME}"
-    }
+    $OUTPUT_FILE = Join-Path $OUTPUT_DIR "${APP_NAME}-${OUTPUT_NAME}"
     
     Write-Host "  Output: $OUTPUT_FILE"
     
@@ -45,7 +45,7 @@ foreach ($target in $TARGETS.Keys) {
     $env:GOOS = $GOOS
     $env:GOARCH = $GOARCH
     
-    go build -o $OUTPUT_FILE -ldflags="-s -w" . 2>&1
+    go build -o $OUTPUT_FILE -ldflags="-s -w" $PROJECT_ROOT 2>&1
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Built: $OUTPUT_NAME" -ForegroundColor Green
