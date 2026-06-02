@@ -386,6 +386,64 @@ func (e *FileError) Unwrap() error {
 	return e.OriginalErr
 }
 
+// Error constructor functions
+
+// NewDatabaseError creates a new DatabaseError
+func NewDatabaseError(message string, errorCode string, sqlState string, statusCode int, originalErr error) *DatabaseError {
+	return &DatabaseError{
+		Message:     message,
+		ErrorCode:   errorCode,
+		SQLState:    sqlState,
+		StatusCode:  statusCode,
+		OriginalErr: originalErr,
+	}
+}
+
+// NewConfigError creates a new ConfigError
+func NewConfigError(message string, configKey string, envVar string, statusCode int, originalErr error) *ConfigError {
+	return &ConfigError{
+		Message:     message,
+		ConfigKey:   configKey,
+		EnvVar:      envVar,
+		StatusCode:  statusCode,
+		OriginalErr: originalErr,
+	}
+}
+
+// NewConnectionError creates a new ConnectionError
+func NewConnectionError(message string, host string, port int, database string, timeout time.Duration, statusCode int, originalErr error) *ConnectionError {
+	return &ConnectionError{
+		Message:     message,
+		Host:        host,
+		Port:        port,
+		Database:    database,
+		Timeout:     timeout,
+		StatusCode:  statusCode,
+		OriginalErr: originalErr,
+	}
+}
+
+// NewValidationError creates a new ValidationError
+func NewValidationError(message string, field string, value interface{}, code string, details []string) *ValidationError {
+	return &ValidationError{
+		Message: message,
+		Field:   field,
+		Value:   value,
+		Code:    code,
+		Details: details,
+	}
+}
+
+// NewFileError creates a new FileError
+func NewFileError(message string, path string, action string, originalErr error) *FileError {
+	return &FileError{
+		Message:     message,
+		Path:        path,
+		Action:      action,
+		OriginalErr: originalErr,
+	}
+}
+
 // Formatters for data formatting
 
 // Formatter formats values for display

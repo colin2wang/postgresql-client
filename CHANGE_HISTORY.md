@@ -19,7 +19,7 @@ This document records all significant changes to the PostgreSQL Client project, 
 
 ---
 
-## 2026-06-02 - Row Insertion, Navigation Refactor, and Bug Fixes
+## 2026-07-17 - Modular Refactoring, Row Insertion, and Bug Fixes
 
 ### New Features
 - Row creation in table content view via `[Add Row]` menu option
@@ -29,15 +29,23 @@ This document records all significant changes to the PostgreSQL Client project, 
 - File logging to `postgresql-client.log` in working directory via `Logger.SetLogFile()`
 
 ### Improvements
-- Collapsed page navigation (First/Prev/Next/Last/Goto) into a unified sub-menu accessed via `[Navigation]`
-- Renamed packages: `connector/` to `database/`, `ui/` to `cli/`, `utils/` to `commons/`
+- **Major modular refactoring**: split monolithic main.go into focused packages
+  - `internal/database/query.go` — `Query` struct with DB helper methods (GetAllDatabases, GetAllTables, DescribeTable, DeleteRow, UpdateTableRow, etc.)
+  - `internal/formatter/formatter.go` — new package for output formatting (PrintTable, ExportJSON, ExportCSV)
+  - main.go reduced from 1343 → 670 lines; removed 15+ duplicated/relocated functions
+- Collapsed page navigation (First/Prev/Next/Last/Goto) into a unified sub-menu via `[Navigation]`
 
 ### Bug Fixes
-- Fixed `showMainMenu` prematurely closing database connection before `selectDatabaseInteractive` could list databases
+- Fixed `showMainMenu` prematurely closing database connection before listing databases
 - Removed unreachable code after `showTableContent` loop
 
 ### Files Modified
+**Created:** internal/database/query.go, internal/formatter/formatter.go  
 **Updated:** main.go, internal/cli/interface.go, internal/commons/commons.go, build.sh, build.ps1, CHANGE_HISTORY.md
+
+---
+
+## 2026-06-02 - Row Insertion, Navigation Refactor, and Bug Fixes
 
 ---
 
