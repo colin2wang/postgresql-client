@@ -1,4 +1,4 @@
-package cil
+package cli
 
 import (
 	"fmt"

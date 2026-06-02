@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/colin2wang/postgresql-client/internal/cil"
+	"github.com/colin2wang/postgresql-client/internal/cli"
 	"github.com/colin2wang/postgresql-client/internal/commons"
 	"github.com/colin2wang/postgresql-client/internal/config"
 	"github.com/colin2wang/postgresql-client/internal/database"
@@ -379,7 +379,7 @@ func selectDatabaseInteractive(ctx context.Context, db *database.Database, cfg *
 		dbOptions[i] = fmt.Sprintf("%s (%d tables)", dbInfo.Name, dbInfo.TableCount)
 	}
 
-	selector := cil.NewDBSelector()
+	selector := cli.NewDBSelector()
 	selected, err := selector.Select("Select a database:", dbOptions)
 	if err != nil {
 		return nil, fmt.Errorf("database selection failed: %w", err)
@@ -483,7 +483,7 @@ func selectTableInteractive(ctx context.Context, db *database.Database, cfg *con
 		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
 	}
 
-	selector := cil.NewTableSelector()
+	selector := cli.NewTableSelector()
 	selected, err := selector.Select(fmt.Sprintf("Select a table (current: %s):", cfg.Database), tableOptions)
 	if err != nil {
 		return fmt.Errorf("table selection failed: %w", err)
@@ -492,7 +492,7 @@ func selectTableInteractive(ctx context.Context, db *database.Database, cfg *con
 	selectedTableName := strings.Split(selected, " (")[0]
 	fmt.Printf("Selected table: %s\n", selectedTableName)
 
-	actionSelector := cil.NewTableActionSelector()
+	actionSelector := cli.NewTableActionSelector()
 	action, err := actionSelector.Select(fmt.Sprintf("What would you like to do with table '%s'?", selectedTableName))
 	if err != nil {
 		return fmt.Errorf("action selection failed: %w", err)
@@ -595,7 +595,7 @@ func selectAndDescribeTable(ctx context.Context, db *database.Database, cfg *con
 		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
 	}
 
-	selector := cil.NewTableSelector()
+	selector := cli.NewTableSelector()
 	selected, err := selector.Select(fmt.Sprintf("Select a table to describe (current: %s):", cfg.Database), tableOptions)
 	if err != nil {
 		return fmt.Errorf("table selection failed: %w", err)
@@ -609,7 +609,7 @@ func selectAndDescribeTable(ctx context.Context, db *database.Database, cfg *con
 func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config) error {
 	commons.DefaultLogger.Debug("Showing main menu")
 
-	menu := cil.NewMenu("Select an action:", []string{
+	menu := cli.NewMenu("Select an action:", []string{
 		"List all databases",
 		"List all tables",
 		"Select and describe table structure",
@@ -682,7 +682,7 @@ func selectAndShowTableContent(ctx context.Context, db *database.Database, cfg *
 		tableOptions[i] = fmt.Sprintf("%s (%d rows)", tableInfo.Name, tableInfo.RowCount)
 	}
 
-	selector := cil.NewTableSelector()
+	selector := cli.NewTableSelector()
 	selected, err := selector.Select(fmt.Sprintf("Select a table to show content (current: %s):", cfg.Database), tableOptions)
 	if err != nil {
 		return fmt.Errorf("table selection failed: %w", err)
@@ -694,7 +694,7 @@ func selectAndShowTableContent(ctx context.Context, db *database.Database, cfg *
 
 // executeCustomQuery prompts user for a custom SQL query and executes it
 func executeCustomQuery(ctx context.Context, db *database.Database) error {
-	input := cil.NewInput("Enter your SQL query:", "")
+	input := cli.NewInput("Enter your SQL query:", "")
 	query, err := input.Ask()
 	if err != nil {
 		return fmt.Errorf("failed to get query input: %w", err)
@@ -867,7 +867,7 @@ func showTableContent(ctx context.Context, db *database.Database, tableName stri
 	}
 
 	pageSize := 20
-	pagination := cil.NewPaginationSelector(totalRecords, pageSize)
+	pagination := cli.NewPaginationSelector(totalRecords, pageSize)
 
 	for {
 		// Query current page
@@ -934,7 +934,7 @@ func printTableWithTruncation(columns []string, tableData []map[string]interface
 
 	for _, row := range tableData {
 		for i, col := range columns {
-			val := cil.TruncateValue(row[col], maxLen)
+			val := cli.TruncateValue(row[col], maxLen)
 			if len(val)+2 > colWidths[i] {
 				colWidths[i] = min(len(val)+2, maxLen+2)
 			}
@@ -956,7 +956,7 @@ func printTableWithTruncation(columns []string, tableData []map[string]interface
 	// Print rows
 	for _, row := range tableData {
 		for i, col := range columns {
-			val := cil.TruncateValue(row[col], maxLen)
+			val := cli.TruncateValue(row[col], maxLen)
 			fmt.Printf("%-*s", colWidths[i], val)
 		}
 		fmt.Println()
@@ -970,7 +970,7 @@ func selectTableRow(tableData []map[string]interface{}, columns []string) (int, 
 	for i, row := range tableData {
 		var values []string
 		for _, col := range columns {
-			values = append(values, cil.TruncateValue(row[col], 30))
+			values = append(values, cli.TruncateValue(row[col], 30))
 		}
 		options[i] = fmt.Sprintf("Row %d: %s", i+1, strings.Join(values, ", "))
 	}
@@ -1005,7 +1005,7 @@ func selectTableRow(tableData []map[string]interface{}, columns []string) (int, 
 // showRowDetail shows row details with edit options
 func showRowDetail(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) error {
 	for {
-		viewer := cil.NewRowDetailViewer(row, columns)
+		viewer := cli.NewRowDetailViewer(row, columns)
 		action, err := viewer.Show()
 		if err != nil {
 			return fmt.Errorf("row detail view failed: %w", err)
@@ -1027,7 +1027,7 @@ func showRowDetail(ctx context.Context, db *database.Database, tableName string,
 				}
 			}
 		case "DELETE":
-			confirm := cil.NewConfirm("Are you sure you want to delete this row?", false)
+			confirm := cli.NewConfirm("Are you sure you want to delete this row?", false)
 			confirmed, err := confirm.Ask()
 			if err != nil {
 				return fmt.Errorf("confirmation failed: %w", err)
@@ -1047,7 +1047,7 @@ func showRowDetail(ctx context.Context, db *database.Database, tableName string,
 
 // editRowDetail edits a row in detail view
 func editRowDetail(ctx context.Context, db *database.Database, tableName string, columns []string, row map[string]interface{}) error {
-	editor := cil.NewRowEditor(row, columns)
+	editor := cli.NewRowEditor(row, columns)
 
 	for {
 		selection, err := editor.SelectColumnsToEdit()
@@ -1067,7 +1067,7 @@ func editRowDetail(ctx context.Context, db *database.Database, tableName string,
 				return nil
 			}
 
-			confirm := cil.NewConfirm("Are you sure you want to update this row?", false)
+			confirm := cli.NewConfirm("Are you sure you want to update this row?", false)
 			confirmed, err := confirm.Ask()
 			if err != nil {
 				return fmt.Errorf("confirmation failed: %w", err)
@@ -1105,7 +1105,7 @@ func editRowDetail(ctx context.Context, db *database.Database, tableName string,
 		}
 
 		editor.GetEditedRow()[column] = newValue
-		fmt.Printf("Updated %s: %s -> %s\n", column, cil.FormatValue(currentValue), cil.FormatValue(newValue))
+		fmt.Printf("Updated %s: %s -> %s\n", column, cli.FormatValue(currentValue), cli.FormatValue(newValue))
 	}
 }
 
