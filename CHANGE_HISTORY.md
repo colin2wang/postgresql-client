@@ -19,6 +19,28 @@ This document records all significant changes to the PostgreSQL Client project, 
 
 ---
 
+## 2026-06-02 - Row Insertion, Navigation Refactor, and Bug Fixes
+
+### New Features
+- Row creation in table content view via `[Add Row]` menu option
+  - Copy from existing row (pre-fills column values) or manual input
+  - Auto-refreshes page after insertion
+- Build scripts accept optional target argument for single-platform compilation
+- File logging to `postgresql-client.log` in working directory via `Logger.SetLogFile()`
+
+### Improvements
+- Collapsed page navigation (First/Prev/Next/Last/Goto) into a unified sub-menu accessed via `[Navigation]`
+- Renamed packages: `connector/` to `database/`, `ui/` to `cli/`, `utils/` to `commons/`
+
+### Bug Fixes
+- Fixed `showMainMenu` prematurely closing database connection before `selectDatabaseInteractive` could list databases
+- Removed unreachable code after `showTableContent` loop
+
+### Files Modified
+**Updated:** main.go, internal/cli/interface.go, internal/commons/commons.go, build.sh, build.ps1, CHANGE_HISTORY.md
+
+---
+
 ## 2026-05-31 - Interactive UI and Commons Library Addition
 
 ### New Features

@@ -495,6 +495,100 @@ func formatValue(v interface{}) string {
 	}
 }
 
+// RowCreator handles creating new rows with optional default values
+type RowCreator struct {
+	columns  []string
+	defaults map[string]interface{}
+}
+
+// NewRowCreator creates a new row creator with given columns
+func NewRowCreator(columns []string) *RowCreator {
+	return &RowCreator{
+		columns:  columns,
+		defaults: make(map[string]interface{}),
+	}
+}
+
+// SetDefaults sets default values for the row (from an existing row)
+func (rc *RowCreator) SetDefaults(row map[string]interface{}) {
+	for k, v := range row {
+		rc.defaults[k] = v
+	}
+}
+
+// Create prompts the user to input values for each column, with optional defaults
+func (rc *RowCreator) Create() (map[string]interface{}, error) {
+	row := make(map[string]interface{})
+	for _, column := range rc.columns {
+		defaultStr := ""
+		if val, ok := rc.defaults[column]; ok {
+			defaultStr = formatValue(val)
+		}
+
+		var inputValue string
+		err := survey.AskOne(
+			&survey.Input{
+				Message: fmt.Sprintf("Enter %s:", column),
+				Default: defaultStr,
+			},
+			&inputValue,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if inputValue == "NULL" || inputValue == "" {
+			row[column] = nil
+		} else {
+			row[column] = inputValue
+		}
+	}
+	return row, nil
+}
+
+// CreateWithMethod lets the user choose how to create a new row
+func (rc *RowCreator) CreateWithMethod() (map[string]interface{}, error) {
+	options := []string{
+		"[Copy] Copy from an existing row (enter row number)",
+		"[Manual] Manual input (enter values for each column)",
+	}
+	var selected string
+	err := survey.AskOne(
+		&survey.Select{
+			Message: "How to create the new row?",
+			Options: options,
+		},
+		&selected,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// We return a marker so the caller knows which method was chosen
+	// The copy method requires the caller to fetch the row data
+	if strings.HasPrefix(selected, "[Copy]") {
+		rowNumberStr := ""
+		err := survey.AskOne(
+			&survey.Input{
+				Message: "Enter the row number to copy from:",
+			},
+			&rowNumberStr,
+		)
+		if err != nil {
+			return nil, err
+		}
+		rowNum, err := strconv.Atoi(rowNumberStr)
+		if err != nil || rowNum < 1 {
+			return nil, fmt.Errorf("invalid row number: %s", rowNumberStr)
+		}
+		// Return a special sentinel — the caller will fetch the row and call SetDefaults + Create
+		return map[string]interface{}{"__COPY_ROW__": rowNum}, nil
+	}
+
+	// Manual input
+	return rc.Create()
+}
+
 // FormatValue formats a value for display (public)
 func FormatValue(v interface{}) string {
 	return formatValue(v)
@@ -561,9 +655,91 @@ func (ps *PaginationSelector) GetTotalRecords() int {
 
 // SelectResult represents the result of a selection
 type SelectResult struct {
-	Action     string // "page", "row", or "exit"
+	Action     string // "page", "row", "add-row", or "exit"
 	PageNumber int
 	RowIndex   int
+}
+
+// showNavigationMenu displays a sub-menu with page navigation options
+func (ps *PaginationSelector) showNavigationMenu() bool {
+	navOptions := make([]string, 0)
+
+	// Add backward navigation options (when not on first page)
+	if ps.currentPage > 1 {
+		navOptions = append(navOptions, "<< First Page")
+		navOptions = append(navOptions, "< Previous Page")
+	}
+
+	// Add current page indicator
+	navOptions = append(navOptions, fmt.Sprintf("[%d] Current Page", ps.currentPage))
+
+	// Add forward navigation options (when not on last page)
+	if ps.currentPage < ps.totalPages {
+		navOptions = append(navOptions, "Next Page >")
+		navOptions = append(navOptions, "Last Page >>")
+	}
+
+	// Add custom navigation options
+	navOptions = append(navOptions, "Go to page...")
+	navOptions = append(navOptions, "Go to row...")
+
+	// Add back option
+	navOptions = append(navOptions, "[Back] Back to main menu")
+
+	var selected string
+	err := survey.AskOne(
+		&survey.Select{
+			Message: "Page navigation:",
+			Options: navOptions,
+		},
+		&selected,
+	)
+	if err != nil {
+		return false
+	}
+
+	switch {
+	case selected == "<< First Page":
+		ps.currentPage = 1
+	case selected == "< Previous Page":
+		ps.currentPage = max(1, ps.currentPage-1)
+	case selected == "Next Page >":
+		ps.currentPage = min(ps.totalPages, ps.currentPage+1)
+	case selected == "Last Page >>":
+		ps.currentPage = ps.totalPages
+	case selected == "Go to page...":
+		var pageStr string
+		err := survey.AskOne(
+			&survey.Input{
+				Message: fmt.Sprintf("Enter page number (1-%d):", ps.totalPages),
+				Default: strconv.Itoa(ps.currentPage),
+			},
+			&pageStr,
+		)
+		if err == nil {
+			if pageNum, err := strconv.Atoi(pageStr); err == nil && pageNum >= 1 && pageNum <= ps.totalPages {
+				ps.currentPage = pageNum
+			}
+		}
+	case selected == "Go to row...":
+		var rowStr string
+		err := survey.AskOne(
+			&survey.Input{
+				Message: fmt.Sprintf("Enter row number (1-%d):", ps.totalRecords),
+				Default: strconv.Itoa((ps.currentPage-1)*ps.pageSize + 1),
+			},
+			&rowStr,
+		)
+		if err == nil {
+			if rowNum, err := strconv.Atoi(rowStr); err == nil && rowNum >= 1 && rowNum <= ps.totalRecords {
+				ps.currentPage = (rowNum-1)/ps.pageSize + 1
+			}
+		}
+	case selected == "[Back] Back to main menu":
+		return false
+	}
+
+	return true // page changed
 }
 
 // SelectPage displays pagination options and row list, allows user to select a page or row
@@ -580,26 +756,11 @@ func (ps *PaginationSelector) SelectPage() (SelectResult, error) {
 
 	options := make([]string, 0)
 
-	// Add backward navigation options (when not on first page)
-	if ps.currentPage > 1 {
-		options = append(options, "<< First Page")
-		options = append(options, "< Previous Page")
-	}
+	// Add collapsed navigation option
+	options = append(options, fmt.Sprintf("[Navigation] Page navigation (%d/%d)", ps.currentPage, ps.totalPages))
 
-	// Add current page indicator
-	options = append(options, fmt.Sprintf("[%d] Current Page", ps.currentPage))
-
-	// Add forward navigation options (when not on last page)
-	if ps.currentPage < ps.totalPages {
-		options = append(options, "Next Page >")
-		options = append(options, "Last Page >>")
-	}
-
-	// Add custom navigation options
-	options = append(options, "Go to page...")
-	options = append(options, "Go to row...")
-
-	// Add back option
+	// Add action options
+	options = append(options, "[Add Row] Add new row")
 	options = append(options, "[Back] Back")
 
 	// Add separator
@@ -633,50 +794,10 @@ func (ps *PaginationSelector) SelectPage() (SelectResult, error) {
 
 	// Parse selection
 	switch {
-	case strings.HasPrefix(selected, "[") && strings.HasSuffix(selected, "] Current Page"):
-		// Stay on current page, select a row
-		result.Action = "page"
-	case selected == "<< First Page":
-		ps.currentPage = 1
-		result.PageNumber = ps.currentPage
-	case selected == "< Previous Page":
-		ps.currentPage = max(1, ps.currentPage-1)
-		result.PageNumber = ps.currentPage
-	case selected == "Next Page >":
-		ps.currentPage = min(ps.totalPages, ps.currentPage+1)
-		result.PageNumber = ps.currentPage
-	case selected == "Last Page >>":
-		ps.currentPage = ps.totalPages
-		result.PageNumber = ps.currentPage
-	case selected == "Go to page...":
-		var pageStr string
-		err := survey.AskOne(
-			&survey.Input{
-				Message: fmt.Sprintf("Enter page number (1-%d):", ps.totalPages),
-				Default: strconv.Itoa(ps.currentPage),
-			},
-			&pageStr,
-		)
-		if err == nil {
-			if pageNum, err := strconv.Atoi(pageStr); err == nil && pageNum >= 1 && pageNum <= ps.totalPages {
-				ps.currentPage = pageNum
-				result.PageNumber = ps.currentPage
-			}
-		}
-	case selected == "Go to row...":
-		var rowStr string
-		err := survey.AskOne(
-			&survey.Input{
-				Message: fmt.Sprintf("Enter row number (1-%d):", ps.totalRecords),
-				Default: strconv.Itoa((ps.currentPage-1)*ps.pageSize + 1),
-			},
-			&rowStr,
-		)
-		if err == nil {
-			if rowNum, err := strconv.Atoi(rowStr); err == nil && rowNum >= 1 && rowNum <= ps.totalRecords {
-				ps.currentPage = (rowNum-1)/ps.pageSize + 1
-				result.PageNumber = ps.currentPage
-			}
+	case strings.HasPrefix(selected, "[Navigation]"):
+		// Show navigation sub-menu
+		if ps.showNavigationMenu() {
+			result.PageNumber = ps.currentPage
 		}
 	case strings.HasPrefix(selected, "Row "):
 		// Extract row number from selection
@@ -686,6 +807,9 @@ func (ps *PaginationSelector) SelectPage() (SelectResult, error) {
 			result.Action = "row"
 			result.RowIndex = rowNum - 1 // Convert to 0-based index
 		}
+	case selected == "[Add Row] Add new row":
+		// Return to caller to handle row creation
+		result.Action = "add-row"
 	case selected == "[Back] Back":
 		// Exit to previous menu
 		result.Action = "exit"

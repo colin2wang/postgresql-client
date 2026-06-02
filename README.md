@@ -4,42 +4,52 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 
 ## Features
 
-- Interactive and non-interactive modes
-- SQL query execution with formatted output
-- Table listing and description
-- Database listing
-- JSON and CSV export
-- Command history
-- YAML configuration support
-- **Interactive database selection with arrow keys**
-- **Interactive table selection with arrow keys**
-- **Interactive main menu**
-- **Row viewing, editing, and deletion**
-- **Table content pagination**
+- **Interactive and Non-Interactive Modes**
+  - Interactive command-line interface
+  - SQL query execution and script file running
+
+- **Data Operations**
+  - SQL query execution (SELECT, INSERT, UPDATE, DELETE, etc.)
+  - JSON and CSV export
+  - Table content pagination
+  - Row viewing, editing, and deletion
+
+- **Interactive Selection**
+  - Database selection with arrow keys
+  - Table selection with arrow keys
+  - Table operation menu (view structure, view content)
+  - Main menu integrating all available actions
+
+- **Configuration Management**
+  - YAML configuration file support
+  - Environment variable support
+  - Command-line argument overrides
 
 ## Project Structure
 
 ```
 .
-├── internal/        # Internal packages
-│   ├── cil/         # Command-line interface interactive components
-│   │   └── interface.go    # Survey-based interactive selectors (DB, table, menu, row)
-│   ├── commons/     # Shared utilities, logging, error types
-│   │   └── commons.go      # Logger, error types, formatters, utility functions
-│   ├── config/      # Configuration management
-│   │   └── config.go       # Config loading from YAML/env
-│   └── database/    # Database operations
-│       └── database.go     # Database connection and query execution
-├── main.go          # Main entry point
-├── config.example.yaml  # Example configuration
-├── build.sh         # Linux/macOS build script
-├── build.ps1        # Windows build script
-└── go.mod           # Go module definition
+├── internal/              # Internal packages
+│   ├── cli/               # CLI interactive components
+│   │   └── interface.go   # Survey-based interactive selectors (DB, table, menu, row)
+│   ├── commons/           # Shared utilities, logging, error types
+│   │   └── commons.go     # Logger, error types, formatters, utility functions
+│   ├── config/            # Configuration management
+│   │   └── config.go      # Config loading from YAML/env
+│   └── database/          # Database operations
+│       └── database.go    # Database connection and query execution
+├── main.go                # Main entry point
+├── config.example.yaml    # Example configuration
+├── build.sh               # Linux/macOS build script
+├── build.ps1              # Windows build script
+└── go.mod                 # Go module definition
 ```
 
 ## Configuration
 
-Create a `config.yaml` file with your database connection details:
+### YAML Configuration File
+
+Create a `config.yaml` file (or use `-c` flag to specify a path):
 
 ```yaml
 host: localhost
@@ -50,12 +60,28 @@ database: postgres
 ssl_mode: disable
 ```
 
-Or use environment variables:
-- `PGHOST`
-- `PGPORT`
-- `PGUSER`
-- `PGPASSWORD`
-- `PGDATABASE`
+### Environment Variables
+
+Configure connection information using the following environment variables:
+
+- `PGHOST` - Database host (default: localhost)
+- `PGPORT` - Database port (default: 5432)
+- `PGUSER` - Database user (default: postgres)
+- `PGPASSWORD` - Database password
+- `PGDATABASE` - Database name (default: postgres)
+
+### Command-Line Arguments
+
+Command-line arguments override values from config files and environment variables:
+
+```
+-c, --config      Path to configuration file
+-h, --host        Database host
+-p, --port        Database port (default: 5432)
+-U, --user        Database user
+-W, --password    Database password
+-d, --database    Database name
+```
 
 ## Usage
 
@@ -65,10 +91,24 @@ Or use environment variables:
 ./postgresql-client
 ```
 
+Enter interactive command-line mode with the following commands:
+
+| Command | Description |
+|---------|-------------|
+| `\q`, `quit`, `exit` | Quit the client |
+| `\h`, `\?`, `help` | Show help message |
+| `\m`, `\menu` | Open main menu (all available actions) |
+| `\l`, `\list` | List all databases |
+| `\dt`, `\d tables` | List all tables |
+| `\d`, `\D` | Interactive table structure description |
+| `\s`, `\select-db` | Select database with arrow keys |
+| `\t`, `\select-table` | Select table (view structure/content) |
+| `\c`, `\C` | Select and connect to database |
+
 ### Non-Interactive Mode
 
 ```bash
-# Execute a SQL command
+# Execute SQL command
 ./postgresql-client -c "SELECT * FROM table"
 
 # Run SQL from file
@@ -81,28 +121,30 @@ Or use environment variables:
 ./postgresql-client --csv "SELECT * FROM table"
 ```
 
-### Command Line Flags
+## Table Operations
 
+### View Table Structure
+```sql
+\d table_name
 ```
--c, --config      Path to config file
--h, --host        Database host
--p, --port        Database port (default: 5432)
--U, --user        Database user
--W, --password    Database password
--d, --database    Database name
-```
+Displays column names, data types, nullability, and default values.
 
-### Interactive Commands
+### Browse Table Content with Pagination
+Use `\t` or `\select-table` command to select a table for:
+- Navigate through paginated results (20 rows per page)
+- Jump to specific page or row number
+- View row details, edit, or delete
 
-- `\q`, `quit`, `exit` - Quit the client
-- `\h`, `\?`, `help` - Show help message
-- `\m`, `\menu` - Open main menu with all available actions
-- `\l`, `\list` - List all databases
-- `\dt` - List all tables
-- `\d` - Select and describe table structure (interactive)
-- `\s`, `\select-db` - Select database with arrow keys
-- `\t`, `\select-table` - Select table with arrow keys and choose action
-- `\c` - Select and connect to database (interactive)
+### Main Menu Actions
+Enter `\m` or `\menu` to open the main menu with options:
+1. List all databases
+2. List all tables
+3. Select and describe table structure
+4. Select and show table content
+5. Select and connect to database
+6. Execute custom SQL query
+7. Show help information
+8. Quit
 
 ## Building
 
@@ -126,44 +168,24 @@ go build -o postgresql-client .
 
 # Cross-compile for Linux
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o postgresql-client-linux .
+
+# Cross-compile for Windows
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o postgresql-client.exe .
 ```
 
 ## Requirements
 
 - Go 1.25+
-- PostgreSQL server
+- PostgreSQL 9.x+ server
+- Network connectivity (for database connections)
 
-## Interactive Selection
+## Dependencies
 
-The client supports interactive database and table selection using arrow keys:
-
-### Main Menu
-Use `\m` or `\menu` command to open the main menu with all available actions:
-- List all databases
-- List all tables  
-- Select and describe table structure
-- Select and show table content
-- Select and connect to database
-- Execute custom SQL query
-- Show help
-- Quit
-
-### Select Database
-Use `\s` or `\select-db` command to open a selector with all available databases (showing table counts). Use up/down arrows to navigate and Enter to select.
-
-### Select Table
-Use `\t` or `\select-table` command to open a selector with all available tables (showing row counts). After selecting a table, you can choose to:
-- Show table structure
-- Show table content
-
-### Row Operations
-When viewing table content, you can:
-- Navigate through pages using pagination (first page, previous page, next page, last page)
-- Jump to specific page or row
-- Select a row directly from the combined page/row selection interface
-- View row details
-- Edit row values
-- Delete a row (with confirmation)
+| Component | Technology |
+|-----------|------------|
+| Database Driver | pgx/v5 |
+| YAML Parsing | yaml.v3 |
+| Interactive UI | survey/v2 |
 
 ## License
 

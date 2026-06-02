@@ -29,6 +29,16 @@ func main() {
 	databaseName := flag.String("d", "", "Database name")
 	flag.Parse()
 
+	// Initialize log file in the same directory as the executable
+	if logDir, err := os.Getwd(); err == nil {
+		logPath := logDir + "\\postgresql-client.log"
+		if err := commons.DefaultLogger.SetLogFile(logPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to open log file: %v\n", err)
+		} else {
+			commons.DefaultLogger.Info("Log file: %s", logPath)
+		}
+	}
+
 	// Load configuration
 	cfg, err := loadConfig(*configPath, *host, *port, *user, *password, *databaseName)
 	if err != nil {
@@ -152,8 +162,13 @@ func runInteractive(ctx context.Context, db *database.Database, cfg *config.Conf
 
 		switch query {
 		case "\\m", "\\menu":
-			if err := showMainMenu(ctx, db, cfg); err != nil {
+			newDb, err := showMainMenu(ctx, db, cfg)
+			if err != nil {
 				fmt.Printf("Error: %v\n", err)
+			}
+			if newDb != nil && newDb != db {
+				db = newDb
+				prompt = fmt.Sprintf("%s@%s> ", cfg.User, cfg.Database)
 			}
 
 		case "\\q", "quit", "exit":
@@ -606,7 +621,7 @@ func selectAndDescribeTable(ctx context.Context, db *database.Database, cfg *con
 }
 
 // showMainMenu displays the main menu with available actions for user selection
-func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config) error {
+func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config) (*database.Database, error) {
 	commons.DefaultLogger.Debug("Showing main menu")
 
 	menu := cli.NewMenu("Select an action:", []string{
@@ -622,36 +637,38 @@ func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config
 
 	selected, err := menu.Select()
 	if err != nil {
-		return fmt.Errorf("menu selection failed: %w", err)
+		return nil, fmt.Errorf("menu selection failed: %w", err)
 	}
 
 	switch selected {
 	case "List all databases":
 		if err := showDatabases(ctx, db); err != nil {
-			return fmt.Errorf("failed to show databases: %w", err)
+			return nil, fmt.Errorf("failed to show databases: %w", err)
 		}
 	case "List all tables":
 		if err := listTables(ctx, db); err != nil {
-			return fmt.Errorf("failed to list tables: %w", err)
+			return nil, fmt.Errorf("failed to list tables: %w", err)
 		}
 	case "Select and describe table structure":
 		if err := selectAndDescribeTable(ctx, db, cfg); err != nil {
-			return fmt.Errorf("failed to select and describe table: %w", err)
+			return nil, fmt.Errorf("failed to select and describe table: %w", err)
 		}
 	case "Select and show table content":
 		if err := selectAndShowTableContent(ctx, db, cfg); err != nil {
-			return fmt.Errorf("failed to select and show table content: %w", err)
+			return nil, fmt.Errorf("failed to select and show table content: %w", err)
 		}
 	case "Select and connect to database":
 		newDb, err := selectDatabaseInteractive(ctx, db, cfg)
 		if err != nil {
-			return fmt.Errorf("failed to select database: %w", err)
-		} else if newDb != nil {
-			fmt.Println("Database connection updated successfully")
+			return nil, fmt.Errorf("failed to select database: %w", err)
 		}
+		if newDb != db {
+			return newDb, nil
+		}
+		return db, nil
 	case "Execute custom SQL query":
 		if err := executeCustomQuery(ctx, db); err != nil {
-			return fmt.Errorf("failed to execute custom query: %w", err)
+			return nil, fmt.Errorf("failed to execute custom query: %w", err)
 		}
 	case "Show help":
 		printWelcome(cfg)
@@ -660,7 +677,7 @@ func showMainMenu(ctx context.Context, db *database.Database, cfg *config.Config
 		os.Exit(0)
 	}
 
-	return nil
+	return db, nil
 }
 
 // selectAndShowTableContent selects a table from interactive list and displays its content
@@ -914,6 +931,11 @@ func showTableContent(ctx context.Context, db *database.Database, tableName stri
 					return fmt.Errorf("failed to show row detail: %w", err)
 				}
 			}
+		case "add-row":
+			err := addNewRow(ctx, db, tableName, columns, pagination)
+			if err != nil {
+				fmt.Printf("Failed to add new row: %v\n", err)
+			}
 		case "page":
 			// Page changed, continue to next iteration to reload data
 		case "exit":
@@ -921,7 +943,80 @@ func showTableContent(ctx context.Context, db *database.Database, tableName stri
 			return nil
 		}
 	}
+}
 
+// addNewRow handles adding a new row to the table
+func addNewRow(ctx context.Context, db *database.Database, tableName string, columns []string, pagination *cli.PaginationSelector) error {
+	creator := cli.NewRowCreator(columns)
+
+	// Let user choose method and potentially get a row number to copy from
+	newRow, err := creator.CreateWithMethod()
+	if err != nil {
+		return fmt.Errorf("failed to create row: %w", err)
+	}
+
+	// Check if the result is a copy-row sentinel
+	if rowNumVal, ok := newRow["__COPY_ROW__"]; ok {
+		rowNum, _ := rowNumVal.(int)
+		// Fetch the source row from the database
+		offset := rowNum - 1
+		query := fmt.Sprintf("SELECT * FROM %s LIMIT 1 OFFSET %d", tableName, offset)
+		rows, err := db.ExecuteQuery(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to fetch source row: %w", err)
+		}
+		defer rows.Close()
+
+		if !rows.Next() {
+			return fmt.Errorf("row %d not found", rowNum)
+		}
+
+		rowData := make(map[string]interface{})
+		scanArgs := make([]interface{}, len(columns))
+		scanTargets := make([]interface{}, len(columns))
+		for i := range columns {
+			scanTargets[i] = &scanArgs[i]
+		}
+		if err := rows.Scan(scanTargets...); err != nil {
+			return fmt.Errorf("failed to scan source row: %w", err)
+		}
+		for i, col := range columns {
+			if scanArgs[i] != nil {
+				rowData[col] = scanArgs[i]
+			}
+		}
+
+		// Set defaults from the copied row
+		creator2 := cli.NewRowCreator(columns)
+		creator2.SetDefaults(rowData)
+		newRow, err = creator2.Create()
+		if err != nil {
+			return fmt.Errorf("failed to create row from copy: %w", err)
+		}
+	}
+
+	// Build INSERT statement
+	placeholders := make([]string, len(columns))
+	values := make([]interface{}, len(columns))
+	for i, col := range columns {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		values[i] = newRow[col]
+	}
+
+	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		tableName,
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "))
+
+	_, err = db.ExecuteNonQuery(ctx, insertQuery, values...)
+	if err != nil {
+		return fmt.Errorf("insert query failed: %w", err)
+	}
+
+	fmt.Println("✅ New row added successfully!")
+
+	// Refresh the current page — reload by resetting pagination state is handled by the loop
+	// The loop will re-fetch the page data on next iteration
 	return nil
 }
 

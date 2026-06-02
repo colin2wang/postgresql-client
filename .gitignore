@@ -4,3 +4,6 @@
 
 # Executable
 dist/*
+
+# AI Code Tools
+.atomcode/

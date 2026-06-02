@@ -2,6 +2,9 @@
 
 # Cross-compilation script for PostgreSQL Client
 # This script builds the application for multiple platforms
+# Usage: ./build.sh [target_name]
+#   target_name: e.g., Windows_x86_64, Linux_x86_64, macOS_ARM64, etc.
+#   If omitted, builds for all platforms.
 
 set -e
 
@@ -11,6 +14,8 @@ PROJECT_ROOT="$SCRIPT_DIR"
 APP_NAME="postgresql-client"
 VERSION=${VERSION:-"1.0.0"}
 OUTPUT_DIR="${PROJECT_ROOT}/dist"
+
+FILTER_TARGET="$1"
 
 echo "Building $APP_NAME v$VERSION..."
 echo ""
@@ -29,26 +34,36 @@ TARGETS=(
     "windows/386:Windows_i386.exe"
 )
 
+if [ -n "$FILTER_TARGET" ]; then
+    # Remove .exe suffix for comparison, then re-add when matching
+    echo "Filtering for target: $FILTER_TARGET"
+    echo ""
+fi
+
 # Build for each target
 for target in "${TARGETS[@]}"; do
     IFS=':' read -r GOOS_GOARCH OUTPUT_NAME <<< "$target"
     GOOS="${GOOS_GOARCH%/*}"
     GOARCH="${GOOS_GOARCH#*/}"
-    
-    echo "Building for $GOOS/$GOARCH -> $OUTPUT_NAME..."
-    
-    # Output file name with app name prefix
-    if [[ "$GOOS" == "windows" ]]; then
-        OUTPUT_FILE="$OUTPUT_DIR/${APP_NAME}-${OUTPUT_NAME}"
-    else
-        OUTPUT_FILE="$OUTPUT_DIR/${APP_NAME}-${OUTPUT_NAME}"
+
+    # Apply filter: compare without .exe suffix
+    if [ -n "$FILTER_TARGET" ]; then
+        NAME_NO_EXT="${OUTPUT_NAME%.exe}"
+        if [ "$NAME_NO_EXT" != "$FILTER_TARGET" ]; then
+            continue
+        fi
     fi
-    
+
+    echo "Building for $GOOS/$GOARCH -> $OUTPUT_NAME..."
+
+    # Output file name with app name prefix
+    OUTPUT_FILE="$OUTPUT_DIR/${APP_NAME}-${OUTPUT_NAME}"
+
     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
         -o "$OUTPUT_FILE" \
         -ldflags="-s -w" \
         "$PROJECT_ROOT"
-    
+
     if [ $? -eq 0 ]; then
         echo "Built: $OUTPUT_NAME"
     else
