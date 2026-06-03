@@ -11,24 +11,43 @@ import (
 
 const DefaultPort = 5432
 
-// Config stores database connection configuration
+// ImportConfig holds directory paths for import operations
+type ImportConfig struct {
+	DDLDir string `yaml:"ddl"`
+	CSVDir string `yaml:"csv"`
+	SQLDir string `yaml:"sql"`
+}
+
+// DefaultImportConfig returns default import directories
+func DefaultImportConfig() ImportConfig {
+	return ImportConfig{
+		DDLDir: "ddl",
+		CSVDir: "csv",
+		SQLDir: "sql",
+	}
+}
+
+// Config stores database connection and import configuration
 type Config struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Database string `yaml:"database"`
-	SSLMode  string `yaml:"ssl_mode,omitempty"`
+	Host     string       `yaml:"host"`
+	Port     int          `yaml:"port"`
+	User     string       `yaml:"user"`
+	Password string       `yaml:"password"`
+	Database string       `yaml:"database"`
+	SSLMode  string       `yaml:"ssl_mode,omitempty"`
+	Import   ImportConfig `yaml:"import"`
 }
 
 // NewConfig creates a new configuration
 func NewConfig() *Config {
+	defaultImport := DefaultImportConfig()
 	return &Config{
 		Host:     "localhost",
 		Port:     DefaultPort,
 		User:     "postgres",
 		Database: "postgres",
 		SSLMode:  "disable",
+		Import:   defaultImport,
 	}
 }
 
@@ -40,6 +59,7 @@ func DefaultConfig() *Config {
 		User:     "postgres",
 		Database: "postgres",
 		SSLMode:  "disable",
+		Import:   DefaultImportConfig(),
 	}
 }
 

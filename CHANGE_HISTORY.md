@@ -19,7 +19,27 @@ This document records all significant changes to the PostgreSQL Client project, 
 
 ---
 
-## 2026-07-17 - Modular Refactoring, Row Insertion, and Bug Fixes
+## 2026-06-03 - Database Import Subsystem with CSV Compare-Import
+
+### New Features
+- **Import subsystem** (`\i` command) with a dedicated import menu
+  - DDL script import: creates tables from `.sql` DDL files; prompts for confirmation if table exists
+  - CSV import: auto-creates table if missing; prompts compare-import (skip identical rows) when table is non-empty
+  - SQL script execution: runs arbitrary `.sql` files with validation
+  - Flat file listing: all files from configurable directories (`ddl/`, `csv/`, `sql/`) shown in one menu
+
+### Improvements
+- CSV import now skips duplicate rows during compare-import, using per-row `SELECT` checks
+- Insert failures are handled gracefully: failed rows are skipped, remaining rows continue
+- All imports pre-validate: DDL syntax check, CSV header/data integrity, SQL syntax validation
+
+### Files Modified
+**Created:** internal/importer/importer.go, internal/importer/validator.go  
+**Updated:** main.go, internal/config/config.go, config.example.yaml, README.md, CHANGE_HISTORY.md
+
+---
+
+## 2026-06-02 - Modular Refactoring, Row Insertion, and Bug Fixes
 
 ### New Features
 - Row creation in table content view via `[Add Row]` menu option
@@ -42,10 +62,6 @@ This document records all significant changes to the PostgreSQL Client project, 
 ### Files Modified
 **Created:** internal/database/query.go, internal/formatter/formatter.go  
 **Updated:** main.go, internal/cli/interface.go, internal/commons/commons.go, build.sh, build.ps1, CHANGE_HISTORY.md
-
----
-
-## 2026-06-02 - Row Insertion, Navigation Refactor, and Bug Fixes
 
 ---
 

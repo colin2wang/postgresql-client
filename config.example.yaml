@@ -10,3 +10,9 @@ ssl_mode: disable
 # max_idle_connections: 10
 # max_open_connections: 100
 # connection_max_lifetime: 5m
+
+# Import directories (default: ddl, csv, sql)
+import:
+  ddl: ddl
+  csv: csv
+  sql: sql

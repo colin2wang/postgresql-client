@@ -14,6 +14,13 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
   - Table content pagination
   - Row viewing, editing, and deletion
 
+- **Import Operations** (`\i` command)
+  - DDL script import with duplicate table detection
+  - CSV import with auto-create table & compare-import (skip identical rows)
+  - SQL script file execution
+  - File dialog from configurable directories (ddl/ csv/ sql/)
+  - Pre-import validation for syntax and data integrity
+
 - **Interactive Selection**
   - Database selection with arrow keys
   - Table selection with arrow keys
@@ -36,8 +43,14 @@ A modular PostgreSQL command-line client written in Go with YAML configuration s
 │   │   └── commons.go     # Logger, error types, formatters, utility functions
 │   ├── config/            # Configuration management
 │   │   └── config.go      # Config loading from YAML/env
-│   └── database/          # Database operations
-│       └── database.go    # Database connection and query execution
+│   ├── database/          # Database operations
+│   │   ├── database.go    # Database connection and query execution
+│   │   └── query.go       # Query struct with helper methods (GetAllTables, DescribeTable, etc.)
+│   ├── formatter/         # Output formatting (table, JSON, CSV)
+│   │   └── formatter.go
+│   └── importer/          # Data import (DDL, CSV, SQL script)
+│       ├── importer.go    # Import core logic
+│       └── validator.go   # Import validation
 ├── main.go                # Main entry point
 ├── config.example.yaml    # Example configuration
 ├── build.sh               # Linux/macOS build script
@@ -58,6 +71,12 @@ user: postgres
 password: your_password
 database: postgres
 ssl_mode: disable
+
+# Import directories for \i import menu
+import:
+  ddl_dir: ddl        # DDL scripts directory
+  csv_dir: csv        # CSV data files directory
+  sql_dir: sql        # SQL script files directory
 ```
 
 ### Environment Variables
@@ -98,6 +117,7 @@ Enter interactive command-line mode with the following commands:
 | `\q`, `quit`, `exit` | Quit the client |
 | `\h`, `\?`, `help` | Show help message |
 | `\m`, `\menu` | Open main menu (all available actions) |
+| `\i`, `\import` | Open import menu (DDL, CSV, SQL script import) |
 | `\l`, `\list` | List all databases |
 | `\dt`, `\d tables` | List all tables |
 | `\d`, `\D` | Interactive table structure description |

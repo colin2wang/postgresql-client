@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/colin2wang/postgresql-client/internal/cli"
@@ -13,6 +14,7 @@ import (
 	"github.com/colin2wang/postgresql-client/internal/config"
 	"github.com/colin2wang/postgresql-client/internal/database"
 	"github.com/colin2wang/postgresql-client/internal/formatter"
+	"github.com/colin2wang/postgresql-client/internal/importer"
 )
 
 func main() {
@@ -24,6 +26,7 @@ func main() {
 	user := flag.String("U", "", "Database user")
 	password := flag.String("W", "", "Database password")
 	databaseName := flag.String("d", "", "Database name")
+	importDir := flag.String("i", "", "Import file or directory path")
 	flag.Parse()
 
 	if logDir, err := os.Getwd(); err == nil {
@@ -49,6 +52,12 @@ func main() {
 	defer db.Close()
 
 	commons.DefaultLogger.Info("Configuration loaded successfully")
+
+	// Handle non-interactive import mode
+	if *importDir != "" {
+		handleImportMode(ctx, db, q, cfg, *importDir)
+		return
+	}
 
 	if flag.NArg() > 0 {
 		handleNonInteractive(ctx, db, q, flag.Args())
@@ -182,6 +191,8 @@ func runInteractive(ctx context.Context, db *database.Database, q *database.Quer
 			}
 		case "\\d", "\\D":
 			selectAndDescribeTable(ctx, q, cfg)
+		case "\\i", "\\import":
+			showImportMenu(ctx, db, q, cfg)
 		default:
 			formatter.ExecuteAndPrint(ctx, db, query)
 		}
@@ -195,16 +206,15 @@ func printWelcome(cfg *config.Config) {
 	fmt.Println("========================================")
 	fmt.Println("Supported commands:")
 	fmt.Println("  - SQL statements (SELECT, INSERT, UPDATE, DELETE, etc.)")
-	fmt.Println("  - \\m              - Show main menu (interactive)")
-	fmt.Println("  - \\q              - Quit the client")
 	fmt.Println("  - \\h              - Show this help message")
 	fmt.Println("  - \\l              - List all databases")
 	fmt.Println("  - \\dt             - List all tables")
-	fmt.Println("  - \\d              - Select and describe table structure (interactive)")
-	fmt.Println("  - \\c              - Select and connect to database (interactive)")
-	fmt.Println("  - \\s              - Select database with arrow keys")
-	fmt.Println("  - \\t              - Select table with arrow keys and choose action")
-	fmt.Println("                    (show structure, show content, or edit content)")
+	fmt.Println("  - \\d              - Describe a table")
+	fmt.Println("  - \\t              - Select and show table content")
+	fmt.Println("  - \\s, \\c          - Select and connect to database")
+	fmt.Println("  - \\i              - Open import menu")
+	fmt.Println("  - \\m              - Show main menu")
+	fmt.Println("  - \\q              - Quit the client")
 	fmt.Println("========================================")
 }
 
@@ -364,6 +374,7 @@ func showMainMenu(ctx context.Context, db *database.Database, q *database.Query,
 		"Select and show table content",
 		"Select and connect to database",
 		"Execute custom SQL query",
+		"Import data",
 		"Show help",
 		"Quit",
 	})
@@ -397,6 +408,8 @@ func showMainMenu(ctx context.Context, db *database.Database, q *database.Query,
 		return db, nil
 	case "Execute custom SQL query":
 		executeCustomQuery(ctx, db)
+	case "Import data":
+		showImportMenu(ctx, db, q, cfg)
 	case "Show help":
 		printWelcome(cfg)
 	case "Quit":
@@ -666,5 +679,165 @@ func editRowDetail(ctx context.Context, db *database.Database, q *database.Query
 		}
 		editor.GetEditedRow()[column] = newValue
 		fmt.Printf("Updated %s: %s -> %s\n", column, cli.FormatValue(currentValue), cli.FormatValue(newValue))
+	}
+}
+
+// showImportMenu displays the import sub-menu
+func showImportMenu(ctx context.Context, db *database.Database, q *database.Query, cfg *config.Config) {
+	commons.DefaultLogger.Debug("Showing import menu")
+
+	for {
+		// Collect files from all import directories
+		type taggedFile struct {
+			Path      string
+			Label     string
+			ImportDir string
+		}
+
+		var taggedFiles []taggedFile
+
+		scanDir := func(dir, dirLabel, tag string) {
+			if dir == "" {
+				return
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				taggedFiles = append(taggedFiles, taggedFile{
+					Path:      filepath.Join(dir, entry.Name()),
+					Label:     fmt.Sprintf("[%s] %s", tag, entry.Name()),
+					ImportDir: dirLabel,
+				})
+			}
+		}
+
+		scanDir(cfg.Import.DDLDir, "ddl", "DDL")
+		scanDir(cfg.Import.CSVDir, "csv", "CSV")
+		scanDir(cfg.Import.SQLDir, "sql", "SQL")
+
+		if len(taggedFiles) == 0 {
+			fmt.Println("No import files found in configured directories (ddl/, csv/, sql/).")
+			return
+		}
+
+		// Build menu options
+		options := make([]string, len(taggedFiles))
+		for i, tf := range taggedFiles {
+			options[i] = tf.Label
+		}
+		options = append(options, "Back to main menu")
+
+		selector := cli.NewTableSelector()
+		selected, err := selector.Select("Select a file to import:", options)
+		if err != nil {
+			fmt.Printf("Selection failed: %v\n", err)
+			return
+		}
+
+		if selected == "Back to main menu" {
+			return
+		}
+
+		// Find the selected tagged file
+		var tf *taggedFile
+		for i, opt := range options {
+			if opt == selected && i < len(taggedFiles) {
+				tf = &taggedFiles[i]
+				break
+			}
+		}
+		if tf == nil {
+			fmt.Println("Invalid selection.")
+			continue
+		}
+
+		imp := importer.NewImporter(db, q, &cfg.Import)
+		ext := strings.ToLower(filepath.Ext(tf.Path))
+
+		switch ext {
+		case ".sql", ".ddl":
+			// .sql/.ddl files in sql/ dir → ExecuteSQLFile; in ddl/ dir → ImportDDL
+			if tf.ImportDir == "sql" {
+				fmt.Printf("Executing SQL script: %s...\n", filepath.Base(tf.Path))
+				err = imp.ExecuteSQLFile(ctx, tf.Path)
+			} else {
+				fmt.Printf("Importing DDL: %s...\n", filepath.Base(tf.Path))
+				err = imp.ImportDDL(ctx, tf.Path)
+			}
+		case ".csv":
+			fmt.Printf("Importing CSV: %s...\n", filepath.Base(tf.Path))
+			err = imp.ImportCSV(ctx, tf.Path)
+		default:
+			fmt.Printf("Executing SQL script: %s...\n", filepath.Base(tf.Path))
+			err = imp.ExecuteSQLFile(ctx, tf.Path)
+		}
+
+		if err != nil {
+			fmt.Printf("Import failed: %v\n", err)
+		}
+		fmt.Println()
+	}
+}
+
+// handleImportMode handles non-interactive import via -i flag
+func handleImportMode(ctx context.Context, db *database.Database, q *database.Query, cfg *config.Config, path string) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot access path '%s': %v\n", path, err)
+		os.Exit(1)
+	}
+
+	imp := importer.NewImporter(db, q, &cfg.Import)
+
+	if fi.IsDir() {
+		// Import all files from directory based on extension
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to read directory '%s': %v\n", path, err)
+			os.Exit(1)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(entry.Name()))
+			filePath := filepath.Join(path, entry.Name())
+			switch ext {
+			case ".sql", ".ddl":
+				if err := imp.ImportDDL(ctx, filePath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error importing DDL '%s': %v\n", entry.Name(), err)
+				}
+			case ".csv":
+				if err := imp.ImportCSV(ctx, filePath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error importing CSV '%s': %v\n", entry.Name(), err)
+				}
+			}
+		}
+		return
+	}
+
+	// Single file
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".sql", ".ddl":
+		if err := imp.ImportDDL(ctx, path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case ".csv":
+		if err := imp.ImportCSV(ctx, path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	default:
+		if err := imp.ExecuteSQLFile(ctx, path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
