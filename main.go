@@ -5,9 +5,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/colin2wang/postgresql-client/internal/cli"
 	"github.com/colin2wang/postgresql-client/internal/commons"
@@ -15,6 +17,7 @@ import (
 	"github.com/colin2wang/postgresql-client/internal/database"
 	"github.com/colin2wang/postgresql-client/internal/formatter"
 	"github.com/colin2wang/postgresql-client/internal/importer"
+	"github.com/colin2wang/postgresql-client/internal/web"
 )
 
 func main() {
@@ -27,6 +30,8 @@ func main() {
 	password := flag.String("W", "", "Database password")
 	databaseName := flag.String("d", "", "Database name")
 	importDir := flag.String("i", "", "Import file or directory path")
+	webMode := flag.Bool("web", false, "Enable web management interface")
+	webPort := flag.Int("web-port", 8080, "Web server port")
 	flag.Parse()
 
 	if logDir, err := os.Getwd(); err == nil {
@@ -52,6 +57,19 @@ func main() {
 	defer db.Close()
 
 	commons.DefaultLogger.Info("Configuration loaded successfully")
+
+	// Handle web mode
+	if *webMode {
+		webPassword := generatePassword(16)
+		fmt.Printf("Web management interface enabled.\n")
+		fmt.Printf("Password: %s\n", webPassword)
+		fmt.Printf("Access at: http://localhost:%d\n", *webPort)
+		if err := web.StartServer(cfg, *webPort, webPassword); err != nil {
+			fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Handle non-interactive import mode
 	if *importDir != "" {
@@ -840,4 +858,14 @@ func handleImportMode(ctx context.Context, db *database.Database, q *database.Qu
 			os.Exit(1)
 		}
 	}
+}
+
+func generatePassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rng.Intn(len(charset))]
+	}
+	return string(b)
 }

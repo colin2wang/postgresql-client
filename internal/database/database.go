@@ -117,6 +117,19 @@ func (c *Connector) Close() error {
 	return nil
 }
 
+// GetDB returns the underlying sql.DB connection
+func (c *Connector) GetDB() *sql.DB {
+	return c.db
+}
+
+// GetDB returns the underlying sql.DB connection
+func (db *Database) GetDB() *sql.DB {
+	if db.connector != nil {
+		return db.connector.GetDB()
+	}
+	return nil
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
